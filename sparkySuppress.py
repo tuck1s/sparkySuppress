@@ -4,6 +4,9 @@ from datetime import datetime
 import configparser, time, json, sys, os, csv, requests, pytz
 from urllib.parse import urlparse,parse_qs
 
+# Library https://github.com/JoshData/python-email-validator - see pip install instructions
+from email_validator import validate_email, EmailNotValidError
+
 T = 60                  # Global timeout value for API requests
 
 def printHelp():
@@ -100,7 +103,50 @@ if len(sys.argv) >= 2:
     suppFname = sys.argv[2]
 
     if cmd == 'check':
-        pass
+        with open(suppFname, 'r', newline='') as infile:
+            f = csv.reader(infile)
+            addrsChecked = 0
+            startT = time.time()                        # Measure overall checking time
+            for r in f:
+                if f.line_num == 1:  # Check if header row present
+                    if 'recipient' in r:  # we've got an email header-row field - continue
+                        hdr = r
+                        continue
+                    elif '@' in r[0] and len(r) == 1:   # Also accept headerless format with just email addresses
+                        hdr = ['recipient']             # line 1 contains data - so continue processing
+                    else:
+                        print('Invalid .csv file header - must contain "recipient" field')
+                        exit(1)
+
+                # Parse values from the line of the file into a dict.  Allows for column ordering to vary.
+                row = {}
+                for i, h in enumerate(hdr):
+                    if r[i]:                            # Only parse non-empty fields from this line
+                        if h == 'recipient' or h == 'type' or h=='description':
+                            row[h] = r[i]               # all fields are simple strings
+                        else:
+                            print('Unexpected .csv file field name found: ', h)
+                            exit(1)
+
+                if 'recipient' in row:
+                    try:
+                        v = validate_email(row['recipient'], check_deliverability=False)  # validate and get info
+                    except EmailNotValidError as e:
+                        # email is not valid, exception message is human-readable
+                        print('Line', f.line_num, ':', row['recipient'], str(e))
+                    addrsChecked += 1
+                    if addrsChecked % 10000 ==0:
+                        print('Addresses checked:', addrsChecked)  # Provide comfort-reporting that we're doing something
+
+                if 'type' in row:
+                    if row['type'] == 'transactional' or row['type'] == 'non_transactional':
+                        pass
+                    else:
+                        print('Line', f.line_num, ': invalid "type" =', row['type'])
+
+            endT = time.time()
+            print('Checked {0} email addresses in {1:2.2f} seconds'.format(addrsChecked, endT - startT))
+
     elif cmd == 'retrieve':
         with open(suppFname, 'w', newline='') as outfile:
             # Check for optional time-range parameters
