@@ -104,16 +104,18 @@ if len(sys.argv) >= 2:
     elif cmd == 'retrieve':
         with open(suppFname, 'w', newline='') as outfile:
             # Check for optional time-range parameters
+            fromTime = None;
+            toTime = None;
             if len(sys.argv) >= 4:
                 fromTime = sys.argv[3]
                 if not isExpectedEventDateTimeFormat(fromTime):
-                    print('Error: unrecognised fromTime:',fromTime)
+                    print('Error: unrecognised from_time:', fromTime)
                     exit(1)
                 fromTime = composeEventDateTimeFormatWithTZ(fromTime, timeZone)
 
                 toTime = sys.argv[4]
                 if not isExpectedEventDateTimeFormat(toTime):
-                    print('Error: unrecognised toTime:',toTime)
+                    print('Error: unrecognised to_time:', toTime)
                     exit(1)
                 toTime = composeEventDateTimeFormatWithTZ(toTime, timeZone)
 
@@ -163,6 +165,9 @@ if len(sys.argv) >= 2:
 
     elif cmd == 'update':
         pass
+    elif cmd == 'delete':
+        pass
+        # deletes have to be done one by one
     else:
         printHelp()
         exit(1)
