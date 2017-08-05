@@ -90,62 +90,93 @@ if not apiKey:
     exit(1)
 baseUri = 'https://' + cfg.get('Host', 'api.sparkpost.com')
 
-timeZone = cfg.get('Timezone', 'UTC')           # If not specified, default to UTC
+timeZone = cfg.get('Timezone', 'UTC')                   # If not specified, default to UTC
 
 properties = cfg.get('Properties', 'recipient,type,description')        # If the fields are not specified, default
 properties = properties.replace('\r', '').replace('\n', '')             # Strip newline and CR
 fList = properties.split(',')
 
-batchSize = cfg.getint('BatchSize', 10000)      # Use default batch size if not given in the .ini file
+batchSize = cfg.getint('BatchSize', 10000)              # Use default batch size if not given in the .ini file
 
-if len(sys.argv) >= 2:
+# Try the configured character encodings in order
+charEncs = cfg.get('FileCharacterEncodings', 'utf-8').split(',')
+
+if len(sys.argv) >= 3:
     cmd = sys.argv[1]
     suppFname = sys.argv[2]
 
     if cmd == 'check':
-        with open(suppFname, 'r', newline='') as infile:
-            f = csv.reader(infile)
-            addrsChecked = 0
-            startT = time.time()                        # Measure overall checking time
-            for r in f:
-                if f.line_num == 1:  # Check if header row present
-                    if 'recipient' in r:  # we've got an email header-row field - continue
-                        hdr = r
-                        continue
-                    elif '@' in r[0] and len(r) == 1:   # Also accept headerless format with just email addresses
-                        hdr = ['recipient']             # line 1 contains data - so continue processing
-                    else:
-                        print('Invalid .csv file header - must contain "recipient" field')
-                        exit(1)
+            # Scan all lines in the file, looking for character encoding that works
+            for ce in charEncs:
+                with open(suppFname, 'r', newline='', encoding=ce) as infile:
+                    try:
+                        l = 1                                   # Keep line number available in exception scope for ease of reporting
+                        print('Trying file', suppFname, 'with encoding:', ce)
+                        for c in infile:
+                            l += 1
+                        break                                   # Successfully read all lines - on to the next stage
 
-                # Parse values from the line of the file into a dict.  Allows for column ordering to vary.
-                row = {}
-                for i, h in enumerate(hdr):
-                    if r[i]:                            # Only parse non-empty fields from this line
-                        if h == 'recipient' or h == 'type' or h=='description':
-                            row[h] = r[i]               # all fields are simple strings
+                    except Exception as e:
+                        # If the file contains character set encoding anomalies we can't recover. At least provide helpful line number output
+                        print('\tNear line', l, e)
+
+            with open(suppFname, 'r', newline='', encoding=ce) as infile:
+                print('\tFile reads OK.\n\nLines in file:', l, ' - checking contents are well-formed ..')
+                f = csv.reader(infile)
+                addrsChecked = 0
+                startT = time.time()                        # Measure overall checking time
+                for r in f:
+                    l = f.line_num
+                    if f.line_num == 1:  # Check if header row present
+                        if 'recipient' in r:  # we've got an email header-row field - continue
+                            hdr = r
+                            continue
+                        elif '@' in r[0] and len(r) == 1:   # Also accept headerless format with just email addresses
+                            hdr = ['recipient']             # line 1 contains data - so continue processing
                         else:
-                            print('Unexpected .csv file field name found: ', h)
+                            print('Invalid .csv file header - must contain "recipient" field')
                             exit(1)
 
-                if 'recipient' in row:
-                    try:
-                        v = validate_email(row['recipient'], check_deliverability=False)  # validate and get info
-                    except EmailNotValidError as e:
-                        # email is not valid, exception message is human-readable
-                        print('Line', f.line_num, ':', row['recipient'], str(e))
-                    addrsChecked += 1
-                    if addrsChecked % 10000 ==0:
-                        print('Addresses checked:', addrsChecked)  # Provide comfort-reporting that we're doing something
+                    # Parse values from the line of the file into a dict.  Allows for column ordering to vary.
+                    row = {}
+                    for i, h in enumerate(hdr):
+                        if r[i]:                            # Only parse non-empty fields from this line.  Accept older trans/nontrans flags
+                            if h=='recipient' or h=='type' or h=='description' or h =='transactional' or h=='non_transactional':
+                                row[h] = r[i]               # all fields are simple strings
+                            else:
+                                print('Unexpected .csv file field name found: ', h)
+                                exit(1)
 
-                if 'type' in row:
-                    if row['type'] == 'transactional' or row['type'] == 'non_transactional':
-                        pass
-                    else:
-                        print('Line', f.line_num, ': invalid "type" =', row['type'])
+                    if 'recipient' in row:
+                        try:
+                            v = validate_email(row['recipient'], check_deliverability=False)  # validate and get info
+                        except EmailNotValidError as e:
+                            # email is not valid, exception message is human-readable
+                            print('Line', f.line_num, ':', row['recipient'], str(e))
+                        addrsChecked += 1
 
-            endT = time.time()
-            print('Checked {0} email addresses in {1:2.2f} seconds'.format(addrsChecked, endT - startT))
+                    if 'type' in row:
+                        if row['type'] == 'transactional' or row['type'] == 'non_transactional':
+                            pass
+                        else:
+                            print('Line', f.line_num, ': invalid "type" =', row['type'])
+
+                    # older style flags (deprecated, but still valid)
+                    if 'transactional' in row:
+                        if row['transactional'].lower() == 'true' or row['transactional'].lower() == 'false':
+                            pass
+                        else:
+                            print('Line', f.line_num, ': invalid "transactional" =', row['transactional'])
+
+                    if 'non_transactional' in row:
+                        if row['non_transactional'].lower() == 'true' or row['non_transactional'].lower() == 'false':
+                            pass
+                        else:
+                            print('Line', f.line_num, ': invalid "non_transactional" =', row['non_transactional'])
+
+                endT = time.time()
+                print('Checked {0} email addresses in {1:2.2f} seconds'.format(addrsChecked, endT - startT))
+
 
     elif cmd == 'retrieve':
         with open(suppFname, 'w', newline='') as outfile:
