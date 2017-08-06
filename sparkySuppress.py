@@ -33,7 +33,7 @@ def printHelp():
     print('    update               Uploads file contents to SparkPost.  Also runs checks.')
     print('    delete               Delete entries from SparkPost.  Also runs checks,')
 
-# Validate our inpput time format, which for simplicity is just to 1 minute resolution without timezone offset.
+# Validate our input time format, which for simplicity is just to 1 minute resolution without timezone offset.
 def isExpectedEventDateTimeFormat(timestamp):
     format_string = '%Y-%m-%dT%H:%M'
     try:
@@ -42,16 +42,15 @@ def isExpectedEventDateTimeFormat(timestamp):
     except ValueError:
         return False
 
-# Take a naive time value, and compose it with the named timezone, giving a time with numeric TZ offset.
-# Owing to DST, the offset may vary on the time of year.
+# Take a naive time value, compose it with the named timezone, giving a datetime with numeric TZ offset.
+# The offset will vary with DST depending on your locale / time of year.
 def composeEventDateTimeFormatWithTZ(t, tzName):
     format_string = '%Y-%m-%dT%H:%M'
     td = pytz.timezone(tzName).localize(datetime.strptime(t, format_string))
     tstr = t+':00'+td.strftime('%z')          # Compose with seconds field and timezone field
     return tstr
 
-# Get suppression list entries, using API call - documentation at
-# https://developers.sparkpost.com/api/suppression-list.html#suppression-list-search-get
+# API access functions - see https://developers.sparkpost.com/api/suppression-list.html
 def getSuppressionList(uri, apiKey, params):
     try:
         path = uri + '/api/v1/suppression-list'
@@ -77,17 +76,16 @@ def getSuppressionList(uri, apiKey, params):
         print('error code', err.status_code)
         exit(1)
 
-def updateSuppressionList(r, uri, apiKey, params):
+def updateSuppressionList(recipBatch, uri, apiKey):
     try:
         path = uri + '/api/v1/suppression-list'
         h = {'Authorization': apiKey, 'Content-Type': 'application/json', 'Accept': 'application/json'}
-        body = json.dumps({'recipients': r})
+        body = json.dumps({'recipients': recipBatch})
         startT = time.time()                        # Measure time for each processing iteration
         response = requests.put(path, timeout=T, headers=h, data=body)      # Params not needed
         endT = time.time()
-        # Handle possible 'too many requests' error inside this module
         if response.status_code == 200:
-            print('Updated {0:6d} entries in {1:2.3f} seconds'.format(len(r), endT - startT))
+            print('Updated {0:6d} entries in {1:2.3f} seconds'.format(len(recipBatch), endT - startT))
             return response.json()
         else:
             print('Error:', response.status_code, ':', response.text)
@@ -98,7 +96,35 @@ def updateSuppressionList(r, uri, apiKey, params):
         print('error code', err.status_code)
         exit(1)
 
+def deleteSuppressionList(recipBatch, uri, apiKey):
+    try:
+        for r in recipBatch:                        # Have to delete one-by-one
+            path = uri + '/api/v1/suppression-list/' + r['recipient']
+            h = {'Authorization': apiKey}
+            startT = time.time()                        # Measure time for each processing iteration
+            response = requests.delete(path, timeout=T, headers=h)  # Params not needed
+            endT = time.time()
+            if response.status_code == 204:
+                print(r['recipient'], 'deleted in {1:2.3f} seconds'.format(len(recipBatch), endT - startT))
+            else:
+                print(r['recipient'], 'Error:', response.status_code, ':', response.text)
 
+    except ConnectionError as err:
+        print('error code', err.status_code)
+        exit(1)
+    return True
+
+# Functions that operate on on a batch - each has a row entry as input, and returns boolean indicating success
+def noAction(r, uri, apiKey):
+    return True
+
+actionVector = {
+    'check': noAction,
+    'update': updateSuppressionList,
+    'delete': deleteSuppressionList
+}
+
+# Functions to perform specific tasks on entire list
 def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, **p):
     fh = csv.DictWriter(outfile, fieldnames=fList, restval='', extrasaction='ignore')
     fh.writeheader()
@@ -137,8 +163,11 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault,  **p):
     f = csv.reader(infile)
     addrsChecked = 0
     goodRecips = 0
+    duplicateRecips = 0
+    badRecips = 0
     goodFlags = 0
     defaultedFlags = 0
+    seen = set()
     recipBatch = []
     startT = time.time()  # Measure overall checking time
     for r in f:
@@ -170,10 +199,16 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault,  **p):
             try:
                 v = validate_email(row['recipient'], check_deliverability=False)  # validate and get info
                 row['recipient'] = v['email']                   # Take the normalised version (lower case etc)
-                recipOK = True
+                if row['recipient'] in seen:
+                    print('  Line', f.line_num, ':', row['recipient'], 'duplicate - will be skipped')
+                    duplicateRecips += 1
+                else:
+                    seen.add(row['recipient'])
+                    recipOK = True
             except EmailNotValidError as e:
                 # email is not valid, exception message is human-readable
                 print('  Line', f.line_num, ':', row['recipient'], str(e))
+                badRecips += 1
 
         if 'type' in row:
             if row['type'] == 'transactional' or row['type'] == 'non_transactional':
@@ -205,25 +240,17 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault,  **p):
             goodRecips += 1
             recipBatch.append(row)              # Build up batches, for more efficient API usage
             if len(recipBatch) >= p['per_page']:
-                actionFunction(recipBatch, baseUri, apiKey, p)
+                actionFunction(recipBatch, baseUri, apiKey)
                 recipBatch = []                 # Empty out, ready for next batch
 
     if len(recipBatch) > 0:                     # Handle the final batch remaining, if any
-        actionFunction(recipBatch, baseUri, apiKey, p)
+        actionFunction(recipBatch, baseUri, apiKey)
     endT = time.time()
-    print('\nSummary:\n{0:8d} entries processed in {1:2.2f} seconds\n{2:8d} good recipients\n{3:8d} bad recipients\n{4:8d} with OK flags\n{5:8d} have type={6} default applied'
-          .format(addrsChecked, endT-startT, goodRecips, addrsChecked-goodRecips, goodFlags, defaultedFlags, typeDefault))
+    print('\nSummary:\n{0:8d} entries processed in {1:2.2f} seconds\n{2:8d} good recipients\n{3:8d} invalid recipients\n{4:8d} duplicates will be skipped'
+        .format(addrsChecked, endT-startT, goodRecips, badRecips, duplicateRecips))
+    print('\n{0:8d} with valid flags\n{1:8d} have type={2} default applied\n'
+        .format(goodFlags, defaultedFlags, typeDefault))
     return True
-
-# Action functions - each has a row entry as input, and returns boolean indicating success
-def noAction(r, uri, apiKey, params):
-    return True
-
-actionVector = {
-    'check': noAction,
-    'update': updateSuppressionList,
-    'delete': noAction
-}
 
 # -----------------------------------------------------------------------------------------
 # Main code
