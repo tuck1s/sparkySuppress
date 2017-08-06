@@ -81,16 +81,25 @@ def updateSuppressionList(recipBatch, uri, apiKey):
         path = uri + '/api/v1/suppression-list'
         h = {'Authorization': apiKey, 'Content-Type': 'application/json', 'Accept': 'application/json'}
         body = json.dumps({'recipients': recipBatch})
+        print('Updating {0:6d} entries to SparkPost'.format(len(recipBatch)), end=' ', flush=True)
+
         startT = time.time()                        # Measure time for each processing iteration
         response = requests.put(path, timeout=T, headers=h, data=body)      # Params not needed
         endT = time.time()
+        print('in {0:2.3f} seconds'.format(endT - startT))
         if response.status_code == 200:
-            print('Updated {0:6d} entries in {1:2.3f} seconds'.format(len(recipBatch), endT - startT))
-            return response.json()
+            return True
         else:
             print('Error:', response.status_code, ':', response.text)
-            print(body)
-            return None
+            # If we do get an error - might be solvable. Split batch into two halves and retry
+            if len(recipBatch) < 2:
+                print('Error - could not update: ', body)
+                return None                                 # Give up
+            else:
+                half = len(recipBatch) // 2                 # integer division
+                r1 = updateSuppressionList(recipBatch[:half], uri, apiKey)
+                r2 = updateSuppressionList(recipBatch[half:], uri, apiKey)
+                return r1 and r2                            # indicate success only if both succeed
 
     except ConnectionError as err:
         print('error code', err.status_code)
@@ -98,7 +107,7 @@ def updateSuppressionList(recipBatch, uri, apiKey):
 
 def deleteSuppressionList(recipBatch, uri, apiKey):
     try:
-        for r in recipBatch:                        # Have to delete one-by-one
+        for r in recipBatch:                            # Have to delete one-by-one
             path = uri + '/api/v1/suppression-list/' + r['recipient']
             h = {'Authorization': apiKey}
             startT = time.time()                        # Measure time for each processing iteration
@@ -159,7 +168,7 @@ def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, **p):
                 print('Unexpected link in response: ', json.dumps(l))
                 exit(1)
 
-def processFile(infile, actionFunction, baseUri, apiKey, typeDefault,  **p):
+def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, **p):
     f = csv.reader(infile)
     addrsChecked = 0
     goodRecips = 0
@@ -198,12 +207,15 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault,  **p):
         if 'recipient' in row:
             try:
                 v = validate_email(row['recipient'], check_deliverability=False)  # validate and get info
-                row['recipient'] = v['email']                   # Take the normalised version (lower case etc)
+                # Take the normalised version and force it to lower-case .. suppression list does not like mixed case
+                row['recipient'] = v['email'].lower()
                 if row['recipient'] in seen:
                     print('  Line', f.line_num, ':', row['recipient'], 'duplicate - will be skipped')
                     duplicateRecips += 1
                 else:
+                    assert not (row['recipient'] in seen)
                     seen.add(row['recipient'])
+                    assert row['recipient'] in seen
                     recipOK = True
             except EmailNotValidError as e:
                 # email is not valid, exception message is human-readable
