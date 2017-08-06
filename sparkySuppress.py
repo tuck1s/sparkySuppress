@@ -19,7 +19,7 @@ def printHelp():
     print('  ./' + shortProgName + ' cmd supp_list [from_time to_time]\n')
     print('')
     print('MANDATORY PARAMETERS')
-    print('    cmd                  check|retrieve|update')
+    print('    cmd                  check|retrieve|update|delete')
     print('    supp_list            .CSV format file, containing as a minimum the email recipients')
     print('                         Full example file format available from https://app.sparkpost.com/lists/suppressions')
     print('')
@@ -30,7 +30,8 @@ def printHelp():
     print('COMMANDS')
     print('    check                Validates the format of a file, checking that email addresses are well-formed, but does not upload them.')
     print('    retrieve             Gets your current suppression-list contents from SparkPost back into a file.')
-    print('    update               Uploads file contents to SparkPost.  Also verifies as "check" does.')
+    print('    update               Uploads file contents to SparkPost.  Also runs checks.')
+    print('    delete               Delete entries from SparkPost.  Also runs checks,')
 
 # Validate our inpput time format, which for simplicity is just to 1 minute resolution without timezone offset.
 def isExpectedEventDateTimeFormat(timestamp):
@@ -76,6 +77,154 @@ def getSuppressionList(uri, apiKey, params):
         print('error code', err.status_code)
         exit(1)
 
+def updateSuppressionList(r, uri, apiKey, params):
+    try:
+        path = uri + '/api/v1/suppression-list'
+        h = {'Authorization': apiKey, 'Content-Type': 'application/json', 'Accept': 'application/json'}
+        body = json.dumps({'recipients': r})
+        startT = time.time()                        # Measure time for each processing iteration
+        response = requests.put(path, timeout=T, headers=h, data=body)      # Params not needed
+        endT = time.time()
+        # Handle possible 'too many requests' error inside this module
+        if response.status_code == 200:
+            print('Updated {0:6d} entries in {1:2.3f} seconds'.format(len(r), endT - startT))
+            return response.json()
+        else:
+            print('Error:', response.status_code, ':', response.text)
+            print(body)
+            return None
+
+    except ConnectionError as err:
+        print('error code', err.status_code)
+        exit(1)
+
+
+def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, **p):
+    fh = csv.DictWriter(outfile, fieldnames=fList, restval='', extrasaction='ignore')
+    fh.writeheader()
+    morePages = True;
+    suppPage = 1
+    p['cursor'] = 'initial'
+    while morePages:
+        startT = time.time()                        # Measure time for each processing iteration
+        res = getSuppressionList(uri=baseUri, apiKey=apiKey, params=p)
+        if not res:                                 # Unexpected error - quit
+            exit(1)
+
+        for i in res['results']:
+            fh.writerow(i)                          # Write out results as CSV rows in the output file
+        endT = time.time()
+
+        if p['cursor'] == 'initial':
+            print('File fields: ', fList)
+            print('Total entries to fetch: ', res['total_count'])
+        print('Page {0:8d}: got {1:6d} entries in {2:2.3f} seconds'.format(suppPage, len(res['results']), endT - startT))
+
+        # Get the links from the response.  If there is a 'next' link, we continue processing
+        morePages = False
+        for l in res['links']:
+            if l['rel'] == 'next':
+                p['cursor'] = parse_qs(urlparse(l['href']).query)['cursor']
+                suppPage += 1
+                morePages=True
+            elif l['rel'] == 'last' or l['rel'] == 'first' or l['rel'] == 'previous':
+                pass
+            else:
+                print('Unexpected link in response: ', json.dumps(l))
+                exit(1)
+
+def processFile(infile, actionFunction, baseUri, apiKey, typeDefault,  **p):
+    f = csv.reader(infile)
+    addrsChecked = 0
+    goodRecips = 0
+    goodFlags = 0
+    defaultedFlags = 0
+    recipBatch = []
+    startT = time.time()  # Measure overall checking time
+    for r in f:
+        l = f.line_num
+        if f.line_num == 1:  # Check if header row present
+            if 'recipient' in r:  # we've got an email header-row field - continue
+                hdr = r
+                continue
+            elif '@' in r[0] and len(r) == 1:  # Also accept headerless format with just email addresses
+                hdr = ['recipient']  # line 1 contains data - so continue processing
+            else:
+                print('Invalid .csv file header - must contain "recipient" field')
+                exit(1)
+
+        # Parse values from the line of the file into a dict.  Allows for column ordering to vary.
+        row = {}
+        for i, h in enumerate(hdr):
+            if r[i]:  # Only parse non-empty fields from this line.  Accept older trans/nontrans flags
+                if h == 'recipient' or h == 'type' or h == 'description' or h == 'transactional' or h == 'non_transactional':
+                    row[h] = r[i]  # all fields are simple strings
+                else:
+                    print('Unexpected .csv file field name found: ', h)
+                    exit(1)
+
+        # Now check this row's contents
+        flagsOK = False
+        recipOK = False
+        if 'recipient' in row:
+            try:
+                v = validate_email(row['recipient'], check_deliverability=False)  # validate and get info
+                row['recipient'] = v['email']                   # Take the normalised version (lower case etc)
+                recipOK = True
+            except EmailNotValidError as e:
+                # email is not valid, exception message is human-readable
+                print('  Line', f.line_num, ':', row['recipient'], str(e))
+
+        if 'type' in row:
+            if row['type'] == 'transactional' or row['type'] == 'non_transactional':
+                flagsOK = True
+            else:
+                print('  Line', f.line_num, ': invalid "type" =', row['type'])
+
+        # older style flags (deprecated, but still valid)
+        if 'transactional' in row:
+            if row['transactional'].lower() == 'true' or row['transactional'].lower() == 'false':
+                flagsOK = True
+            else:
+                print('  Line', f.line_num, ': invalid "transactional" =', row['transactional'])
+
+        if 'non_transactional' in row:
+            if row['non_transactional'].lower() == 'true' or row['non_transactional'].lower() == 'false':
+                flagsOK = True
+            else:
+                print('  Line', f.line_num, ': invalid "non_transactional" =', row['non_transactional'])
+
+        addrsChecked += 1
+        if flagsOK:
+            goodFlags += 1
+        else:
+            row['type'] = typeDefault
+            defaultedFlags += 1
+
+        if recipOK:
+            goodRecips += 1
+            recipBatch.append(row)              # Build up batches, for more efficient API usage
+            if len(recipBatch) >= p['per_page']:
+                actionFunction(recipBatch, baseUri, apiKey, p)
+                recipBatch = []                 # Empty out, ready for next batch
+
+    if len(recipBatch) > 0:                     # Handle the final batch remaining, if any
+        actionFunction(recipBatch, baseUri, apiKey, p)
+    endT = time.time()
+    print('\nSummary:\n{0:8d} entries processed in {1:2.2f} seconds\n{2:8d} good recipients\n{3:8d} bad recipients\n{4:8d} with OK flags\n{5:8d} have type={6} default applied'
+          .format(addrsChecked, endT-startT, goodRecips, addrsChecked-goodRecips, goodFlags, defaultedFlags, typeDefault))
+    return True
+
+# Action functions - each has a row entry as input, and returns boolean indicating success
+def noAction(r, uri, apiKey, params):
+    return True
+
+actionVector = {
+    'check': noAction,
+    'update': updateSuppressionList,
+    'delete': noAction
+}
+
 # -----------------------------------------------------------------------------------------
 # Main code
 # -----------------------------------------------------------------------------------------
@@ -98,6 +247,8 @@ fList = properties.split(',')
 
 batchSize = cfg.getint('BatchSize', 10000)              # Use default batch size if not given in the .ini file
 
+typeDefault = cfg.get('TypeDefault')
+
 # Try the configured character encodings in order
 charEncs = cfg.get('FileCharacterEncodings', 'utf-8').split(',')
 
@@ -105,7 +256,7 @@ if len(sys.argv) >= 3:
     cmd = sys.argv[1]
     suppFname = sys.argv[2]
 
-    if cmd == 'check':
+    if cmd in actionVector.keys():
             # Scan all lines in the file, looking for character encoding that works
             for ce in charEncs:
                 with open(suppFname, 'r', newline='', encoding=ce) as infile:
@@ -120,65 +271,11 @@ if len(sys.argv) >= 3:
                         # If the file contains character set encoding anomalies we can't recover. At least provide helpful line number output
                         print('\tNear line', l, e)
 
+            print('\tFile reads OK.\n\nLines in file:', l)
             with open(suppFname, 'r', newline='', encoding=ce) as infile:
-                print('\tFile reads OK.\n\nLines in file:', l, ' - checking contents are well-formed ..')
-                f = csv.reader(infile)
-                addrsChecked = 0
-                startT = time.time()                        # Measure overall checking time
-                for r in f:
-                    l = f.line_num
-                    if f.line_num == 1:  # Check if header row present
-                        if 'recipient' in r:  # we've got an email header-row field - continue
-                            hdr = r
-                            continue
-                        elif '@' in r[0] and len(r) == 1:   # Also accept headerless format with just email addresses
-                            hdr = ['recipient']             # line 1 contains data - so continue processing
-                        else:
-                            print('Invalid .csv file header - must contain "recipient" field')
-                            exit(1)
+                processFile(infile, actionVector[cmd], baseUri, apiKey, typeDefault, per_page=batchSize)
 
-                    # Parse values from the line of the file into a dict.  Allows for column ordering to vary.
-                    row = {}
-                    for i, h in enumerate(hdr):
-                        if r[i]:                            # Only parse non-empty fields from this line.  Accept older trans/nontrans flags
-                            if h=='recipient' or h=='type' or h=='description' or h =='transactional' or h=='non_transactional':
-                                row[h] = r[i]               # all fields are simple strings
-                            else:
-                                print('Unexpected .csv file field name found: ', h)
-                                exit(1)
-
-                    if 'recipient' in row:
-                        try:
-                            v = validate_email(row['recipient'], check_deliverability=False)  # validate and get info
-                        except EmailNotValidError as e:
-                            # email is not valid, exception message is human-readable
-                            print('Line', f.line_num, ':', row['recipient'], str(e))
-                        addrsChecked += 1
-
-                    if 'type' in row:
-                        if row['type'] == 'transactional' or row['type'] == 'non_transactional':
-                            pass
-                        else:
-                            print('Line', f.line_num, ': invalid "type" =', row['type'])
-
-                    # older style flags (deprecated, but still valid)
-                    if 'transactional' in row:
-                        if row['transactional'].lower() == 'true' or row['transactional'].lower() == 'false':
-                            pass
-                        else:
-                            print('Line', f.line_num, ': invalid "transactional" =', row['transactional'])
-
-                    if 'non_transactional' in row:
-                        if row['non_transactional'].lower() == 'true' or row['non_transactional'].lower() == 'false':
-                            pass
-                        else:
-                            print('Line', f.line_num, ': invalid "non_transactional" =', row['non_transactional'])
-
-                endT = time.time()
-                print('Checked {0} email addresses in {1:2.2f} seconds'.format(addrsChecked, endT - startT))
-
-
-    elif cmd == 'retrieve':
+    elif cmd=='retrieve':
         with open(suppFname, 'w', newline='') as outfile:
             # Check for optional time-range parameters
             fromTime = None;
@@ -197,57 +294,13 @@ if len(sys.argv) >= 3:
                 toTime = composeEventDateTimeFormatWithTZ(toTime, timeZone)
 
                 print('Retrieving SparkPost suppression-list entries from ' + fromTime + ' to ' + toTime + ' ' + timeZone + ' to', suppFname)
+                opts = {'from': fromTime, 'to': toTime, 'per_page': batchSize}      # Need this way, as 'from' is a Python keyword
+                RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, **opts)
             else:
                 print('Retrieving SparkPost suppression-list entries (any time-range) to', suppFname)
-
-            fh = csv.DictWriter(outfile, fieldnames=fList, restval='', extrasaction='ignore')
-            fh.writeheader()
-            print('Properties: ', fList)
-            morePages = True;
-            suppPage = 1
-            p = {
-                'cursor': 'initial',
-                'per_page': batchSize,
-            }
-            if toTime and fromTime:
-                p.update({
-                    'from': fromTime,
-                    'to': toTime,
-                })
-            while morePages:
-                startT = time.time()                        # Measure time for each processing iteration
-                res = getSuppressionList(uri=baseUri, apiKey=apiKey, params=p)
-                if not res:                                 # Unexpected error - quit
-                    exit(1)
-                for i in res['results']:
-                    fh.writerow(i)                          # Write out results as CSV rows in the output file
-                endT = time.time()
-
-                if p['cursor'] == 'initial':
-                    print('Total entries to fetch: ', res['total_count'])
-                print('Page {0:8d}: got {1:6d} events in {2:2.3f} seconds'.format(suppPage, len(res['results']), endT - startT))
-
-                # Get the links from the response.  If there is a 'next' link, we continue processing
-                morePages = False
-                for l in res['links']:
-                    if l['rel'] == 'next':
-                        p['cursor'] = parse_qs(urlparse(l['href']).query)['cursor']
-                        suppPage += 1
-                        morePages=True
-                    elif l['rel'] == 'last' or l['rel'] == 'first' or l['rel'] == 'previous':
-                        pass
-                    else:
-                        print('Unexpected link in response: ', json.dumps(l))
-                        exit(1)
-
-    elif cmd == 'update':
-        pass
-    elif cmd == 'delete':
-        pass
-        # deletes have to be done one by one
+                RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, per_page=batchSize)
     else:
         printHelp()
         exit(1)
-
 else:
     printHelp()
