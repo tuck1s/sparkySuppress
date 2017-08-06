@@ -2,7 +2,7 @@
 from __future__ import print_function
 from datetime import datetime
 import configparser, time, json, sys, os, csv, requests, pytz
-from urllib.parse import urlparse,parse_qs
+from urllib.parse import urlparse,parse_qs,quote
 
 # Library https://github.com/JoshData/python-email-validator - see pip install instructions
 from email_validator import validate_email, EmailNotValidError
@@ -88,18 +88,18 @@ def updateSuppressionList(recipBatch, uri, apiKey):
         endT = time.time()
         print('in {0:2.3f} seconds'.format(endT - startT))
         if response.status_code == 200:
-            return True
+            return len(recipBatch)
         else:
             print('Error:', response.status_code, ':', response.text)
             # If we do get an error - might be solvable. Split batch into two halves and retry
             if len(recipBatch) < 2:
                 print('Error - could not update: ', body)
-                return None                                 # Give up
+                return 0                                    # Give up
             else:
                 half = len(recipBatch) // 2                 # integer division
                 r1 = updateSuppressionList(recipBatch[:half], uri, apiKey)
                 r2 = updateSuppressionList(recipBatch[half:], uri, apiKey)
-                return r1 and r2                            # indicate success only if both succeed
+                return r1 + r2                              # indicate successful entries done
 
     except ConnectionError as err:
         print('error code', err.status_code)
@@ -107,25 +107,28 @@ def updateSuppressionList(recipBatch, uri, apiKey):
 
 def deleteSuppressionList(recipBatch, uri, apiKey):
     try:
-        for r in recipBatch:                            # Have to delete one-by-one
-            path = uri + '/api/v1/suppression-list/' + r['recipient']
+        done = 0
+        for r in recipBatch:                            # Have to delete one-by-one.  URL-quote the recipient part.
+            path = uri + '/api/v1/suppression-list/' + quote(r['recipient'])
             h = {'Authorization': apiKey}
             startT = time.time()                        # Measure time for each processing iteration
             response = requests.delete(path, timeout=T, headers=h)  # Params not needed
             endT = time.time()
             if response.status_code == 204:
                 print(r['recipient'], 'deleted in {1:2.3f} seconds'.format(len(recipBatch), endT - startT))
+                done += 1
             else:
                 print(r['recipient'], 'Error:', response.status_code, ':', response.text)
 
     except ConnectionError as err:
         print('error code', err.status_code)
         exit(1)
-    return True
+    return done
 
-# Functions that operate on on a batch - each has a row entry as input, and returns boolean indicating success
+# Functions that operate on on a batch - each has a row entry as input, and returns a count of entries
+# actually transacted on SparkPost.
 def noAction(r, uri, apiKey):
-    return True
+    return 0
 
 actionVector = {
     'check': noAction,
@@ -174,6 +177,7 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, **p):
     goodRecips = 0
     duplicateRecips = 0
     badRecips = 0
+    doneRecips = 0
     goodFlags = 0
     defaultedFlags = 0
     seen = set()
@@ -213,9 +217,6 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, **p):
                     print('  Line', f.line_num, ':', row['recipient'], 'duplicate - will be skipped')
                     duplicateRecips += 1
                 else:
-                    assert not (row['recipient'] in seen)
-                    seen.add(row['recipient'])
-                    assert row['recipient'] in seen
                     recipOK = True
             except EmailNotValidError as e:
                 # email is not valid, exception message is human-readable
@@ -250,16 +251,17 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, **p):
 
         if recipOK:
             goodRecips += 1
+            seen.add(row['recipient'])          # TODO: handle flag-awareness on dups
             recipBatch.append(row)              # Build up batches, for more efficient API usage
             if len(recipBatch) >= p['per_page']:
-                actionFunction(recipBatch, baseUri, apiKey)
+                doneRecips += actionFunction(recipBatch, baseUri, apiKey)
                 recipBatch = []                 # Empty out, ready for next batch
 
     if len(recipBatch) > 0:                     # Handle the final batch remaining, if any
-        actionFunction(recipBatch, baseUri, apiKey)
+        doneRecips += actionFunction(recipBatch, baseUri, apiKey)
     endT = time.time()
-    print('\nSummary:\n{0:8d} entries processed in {1:2.2f} seconds\n{2:8d} good recipients\n{3:8d} invalid recipients\n{4:8d} duplicates will be skipped'
-        .format(addrsChecked, endT-startT, goodRecips, badRecips, duplicateRecips))
+    print('\nSummary:\n{0:8d} entries processed in {1:2.2f} seconds\n{2:8d} good recipients\n{3:8d} invalid recipients\n{4:8d} duplicates will be skipped\n{5:8d} done on SparkPost'
+        .format(addrsChecked, endT-startT, goodRecips, badRecips, duplicateRecips, doneRecips))
     print('\n{0:8d} with valid flags\n{1:8d} have type={2} default applied\n'
         .format(goodFlags, defaultedFlags, typeDefault))
     return True
