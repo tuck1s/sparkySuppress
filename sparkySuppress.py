@@ -148,9 +148,9 @@ actionVector = {
 def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, **p):
     fh = csv.DictWriter(outfile, fieldnames=fList, restval='', extrasaction='ignore')
     fh.writeheader()
-    morePages = True;
     suppPage = 1
     p['cursor'] = 'initial'
+    morePages = True;
     while morePages:
         startT = time.time()                        # Measure time for each processing iteration
         res = getSuppressionList(uri=baseUri, apiKey=apiKey, params=p)
@@ -173,7 +173,7 @@ def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, **p):
                 p['cursor'] = parse_qs(urlparse(l['href']).query)['cursor']
                 suppPage += 1
                 morePages=True
-            elif l['rel'] == 'last' or l['rel'] == 'first' or l['rel'] == 'previous':
+            elif l['rel'] in ('last', 'first', 'previous'):
                 pass
             else:
                 print('Unexpected link in response: ', json.dumps(l))
@@ -220,11 +220,7 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, **p):
                 v = validate_email(row['recipient'], check_deliverability=False)  # don't check d12y, as too slow
                 # Take the normalised version and force it to lower-case .. suppression list does not like mixed case
                 row['recipient'] = v['email'].lower()
-                if row['recipient'] in seen:
-                    print('  Line {0:8d}   skipping duplicate {1}'.format(f.line_num, row['recipient']))
-                    duplicateRecips += 1
-                else:
-                    recipOK = True
+                recipOK = True
             except EmailNotValidError as e:
                 # email is not valid, exception message is human-readable
                 print('  Line {0:8d} ! {1} {2}'.format(f.line_num, row['recipient'], str(e)))
@@ -260,12 +256,21 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, **p):
             defaultedFlags += 1
 
         if recipOK:
-            goodRecips += 1
-            seen.add(row['recipient'])          # TODO: handle flag-awareness on dups
-            recipBatch.append(row)              # Build up batches, for more efficient API usage
-            if len(recipBatch) >= p['per_page']:
-                doneRecips += actionFunction(recipBatch, baseUri, apiKey)
-                recipBatch = []                 # Empty out, ready for next batch
+            # construct a tuple for 'already seen' checking logic that includes 'type' flag, if given
+            if 'type' in row:
+                u = (row['recipient'], row['type'])
+            else:
+                u = (row['recipient'], None)
+            if u in seen:
+                print('  Line {0:8d}   skipping duplicate {1}'.format(f.line_num, u))
+                duplicateRecips += 1
+            else:
+                goodRecips += 1
+                seen.add(u)                         # TODO: handle flag-awareness on dups
+                recipBatch.append(row)              # Build up batches, for more efficient API usage
+                if len(recipBatch) >= p['per_page']:
+                    doneRecips += actionFunction(recipBatch, baseUri, apiKey)
+                    recipBatch = []                 # Empty out, ready for next batch
 
     if len(recipBatch) > 0:                     # Handle the final batch remaining, if any
         doneRecips += actionFunction(recipBatch, baseUri, apiKey)
