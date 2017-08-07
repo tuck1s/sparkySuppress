@@ -3,11 +3,13 @@ from __future__ import print_function
 from datetime import datetime
 import configparser, time, json, sys, os, csv, requests, pytz
 from urllib.parse import urlparse,parse_qs,quote
+from distutils.util import strtobool
 
 # Library https://github.com/JoshData/python-email-validator - see pip install instructions
 from email_validator import validate_email, EmailNotValidError
 
 T = 60                  # Global timeout value for API requests
+flagNames = ('transactional', 'non_transactional')
 
 def printHelp():
     progName = sys.argv[0]
@@ -49,6 +51,12 @@ def composeEventDateTimeFormatWithTZ(t, tzName):
     td = pytz.timezone(tzName).localize(datetime.strptime(t, format_string))
     tstr = t+':00'+td.strftime('%z')          # Compose with seconds field and timezone field
     return tstr
+
+# Strip initial and final quotes from strings, if present (either single, or double quotes in pairs)
+def stripQuotes(s):
+    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+        s = s[1:-1]
+    return s
 
 # API access functions - see https://developers.sparkpost.com/api/suppression-list.html
 def getSuppressionList(uri, apiKey, params):
@@ -107,7 +115,7 @@ def updateSuppressionList(recipBatch, uri, apiKey):
 
 def deleteSuppressionList(recipBatch, uri, apiKey):
     try:
-        done = 0
+        doneCount = 0
         for r in recipBatch:                            # Have to delete one-by-one.  URL-quote the recipient part.
             path = uri + '/api/v1/suppression-list/' + quote(r['recipient'])
             h = {'Authorization': apiKey}
@@ -116,14 +124,14 @@ def deleteSuppressionList(recipBatch, uri, apiKey):
             endT = time.time()
             if response.status_code == 204:
                 print(r['recipient'], 'deleted in {1:2.3f} seconds'.format(len(recipBatch), endT - startT))
-                done += 1
+                doneCount += 1
             else:
                 print(r['recipient'], 'Error:', response.status_code, ':', response.text)
 
     except ConnectionError as err:
         print('error code', err.status_code)
         exit(1)
-    return done
+    return doneCount
 
 # Functions that operate on on a batch - each has a row entry as input, and returns a count of entries
 # actually transacted on SparkPost.
@@ -198,55 +206,57 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, **p):
         # Parse values from the line of the file into a dict.  Allows for column ordering to vary.
         row = {}
         for i, h in enumerate(hdr):
-            if r[i]:  # Only parse non-empty fields from this line.  Accept older trans/nontrans flags
-                if h == 'recipient' or h == 'type' or h == 'description' or h == 'transactional' or h == 'non_transactional':
-                    row[h] = r[i]  # all fields are simple strings
+            if r[i]:  # Only parse non-empty fields from this line.  Also accept older flagNames columns
+                if (h in ('recipient', 'type', 'description')) or (h in flagNames):
+                    row[h] = r[i].strip()               # all fields are simple strings - strip leading/trailing whitespace
                 else:
                     print('Unexpected .csv file field name found: ', h)
                     exit(1)
 
         # Now check this row's contents
-        flagsOK = False
         recipOK = False
         if 'recipient' in row:
             try:
-                v = validate_email(row['recipient'], check_deliverability=False)  # validate and get info
+                v = validate_email(row['recipient'], check_deliverability=False)  # don't check d12y, as too slow
                 # Take the normalised version and force it to lower-case .. suppression list does not like mixed case
                 row['recipient'] = v['email'].lower()
                 if row['recipient'] in seen:
-                    print('  Line', f.line_num, ':', row['recipient'], 'duplicate - will be skipped')
+                    print('  Line {0:8d}   skipping duplicate {1}'.format(f.line_num, row['recipient']))
                     duplicateRecips += 1
                 else:
                     recipOK = True
             except EmailNotValidError as e:
                 # email is not valid, exception message is human-readable
-                print('  Line', f.line_num, ':', row['recipient'], str(e))
+                print('  Line {0:8d} ! {1} {2}'.format(f.line_num, row['recipient'], str(e)))
                 badRecips += 1
 
+        flagsOK = False
         if 'type' in row:
-            if row['type'] == 'transactional' or row['type'] == 'non_transactional':
+            row['type'] = stripQuotes(row['type'].lower())          # Clean up by lower-casing and stripping quotes
+            if row['type'] in flagNames:
                 flagsOK = True
             else:
-                print('  Line', f.line_num, ': invalid "type" =', row['type'])
+                print('  Line {0:8d} w invalid "type" = {1}, must be {2}'.format(f.line_num, row['type'], flagNames))
 
-        # older style flags (deprecated, but still valid)
-        if 'transactional' in row:
-            if row['transactional'].lower() == 'true' or row['transactional'].lower() == 'false':
-                flagsOK = True
-            else:
-                print('  Line', f.line_num, ': invalid "transactional" =', row['transactional'])
-
-        if 'non_transactional' in row:
-            if row['non_transactional'].lower() == 'true' or row['non_transactional'].lower() == 'false':
-                flagsOK = True
-            else:
-                print('  Line', f.line_num, ': invalid "non_transactional" =', row['non_transactional'])
+        for i in flagNames:                                         # older style flags (deprecated, but still valid)
+            if i in row:
+                row[i] = stripQuotes(row[i].title())                # Clean up by title-casing and stripping quotes
+                try:
+                    row[i] = bool(strtobool(row[i]))                # in-place replacement with bool type
+                    flagsOK = True
+                except ValueError:
+                    print('  Line {0:8d} w invalid {1} = {2}, must be true or false'.format(f.line_num, i, row[i]))
+                    flagsOK = False
 
         addrsChecked += 1
         if flagsOK:
             goodFlags += 1
         else:
-            row['type'] = typeDefault
+            # Apply user-specified default using the new flag type - also purge any old-style flags
+            for i in flagNames:
+                if i in row:
+                    del row[i]
+            row['type'] = typeDefault                               # Apply user-specified value
             defaultedFlags += 1
 
         if recipOK:
@@ -289,6 +299,9 @@ fList = properties.split(',')
 batchSize = cfg.getint('BatchSize', 10000)              # Use default batch size if not given in the .ini file
 
 typeDefault = cfg.get('TypeDefault')
+if not(typeDefault in flagNames):
+    print('Invalid .ini file setting typeDefault = ', typeDefault, 'Must be', flagNames)
+    exit(1)
 
 # Try the configured character encodings in order
 charEncs = cfg.get('FileCharacterEncodings', 'utf-8').split(',')
