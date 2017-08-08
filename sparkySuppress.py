@@ -125,13 +125,13 @@ class deleter(threading.Thread):
         self.res = None
 
     def run(self):
-        s = self.s
-        self.res = s.request('DELETE', url=self.path, timeout=T, headers=self.headers)
+        self.res = self.s.request('DELETE', url=self.path, timeout=T, headers=self.headers)
+        pass
 
     def response(self):
         return(self.res)
 
-Nthreads = 10
+Nthreads = 1
 svec = [None] * Nthreads                                # Persistent sessions
 
 #  Launch multi-threaded deletions.  URL-quote the recipient part.
