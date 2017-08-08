@@ -127,12 +127,19 @@ class deleter(threading.Thread):
         self.res = None
 
     def run(self):
-        self.res = self.s.delete(url=self.path, timeout=T, headers=self.headers)
+        moreToDo = True
+        while moreToDo:
+            self.res = self.s.delete(url=self.path, timeout=T, headers=self.headers)
+            if self.res.status_code == 429:
+                if self.res.json()['errors'][0]['message'] == 'Too many requests':
+                    snooze = 120
+                    print('.. pausing', snooze, 'seconds for rate-limiting')
+                    time.sleep(snooze)
+                    continue  # try again
+            else:
+                return
 
     def response(self):
-        while self.res == None:
-            print('*** got here unexpectedly')
-            time.sleep(0.1)
         return(self.res)
 
 Nthreads = 20
