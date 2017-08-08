@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import print_function
 from datetime import datetime
-import configparser, time, json, sys, os, csv, requests, pytz
+import configparser, time, json, sys, os, csv, requests, pytz, threading
+import urllib3, certifi
 from urllib.parse import urlparse,parse_qs,quote
 from distutils.util import strtobool
 
@@ -113,24 +114,68 @@ def updateSuppressionList(recipBatch, uri, apiKey):
         print('error code', err.status_code)
         exit(1)
 
-def deleteSuppressionList(recipBatch, uri, apiKey):
-    try:
-        doneCount = 0
-        for r in recipBatch:                            # Have to delete one-by-one.  URL-quote the recipient part.
-            path = uri + '/api/v1/suppression-list/' + quote(r['recipient'])
-            h = {'Authorization': apiKey}
-            startT = time.time()                        # Measure time for each processing iteration
-            response = requests.delete(path, timeout=T, headers=h)  # Params not needed
-            endT = time.time()
-            if response.status_code == 204:
-                print(r['recipient'], 'deleted in {1:2.3f} seconds'.format(len(recipBatch), endT - startT))
-                doneCount += 1
-            else:
-                print(r['recipient'], 'Error:', response.status_code, ':', response.text)
+#
+# Performance improvement: use 'threading' class for concurrent deletions (each API-call deletes one entry)
+class deleter(threading.Thread):
+    def __init__(self, path, headers, s):
+        threading.Thread.__init__(self)
+        self.path = path
+        self.headers = headers
+        self.s = s
+        self.res = None
 
-    except ConnectionError as err:
-        print('error code', err.status_code)
-        exit(1)
+    def run(self):
+        s = self.s
+        self.res = s.request('DELETE', url=self.path, timeout=T, headers=self.headers)
+
+    def response(self):
+        return(self.res)
+
+Nthreads = 10
+svec = [None] * Nthreads                                # Persistent sessions
+
+#  Launch multi-threaded deletions.  URL-quote the recipient part.
+def threadAction(recipBatch, uri, apiKey):
+    assert len(recipBatch) <= Nthreads
+    # Set up our connection pool
+    if None in svec:
+        for i,v in enumerate(svec):
+            svec[i] = urllib3.PoolManager(cert_reqs = 'CERT_REQUIRED', ca_certs = certifi.where() )
+    th = [None] * Nthreads  # Init empty array
+    h = {'Authorization': apiKey}
+
+    for i,r in enumerate(recipBatch):
+        path = uri + '/api/v1/suppression-list/' + quote(r['recipient'])
+        th[i] = deleter(path, h, svec[i])
+        th[i].start()
+
+    # Wait for the threads to come back
+    doneCount = 0
+    for i,r in enumerate(recipBatch):
+        th[i].join(T + 10)  # Somewhat longer than the "requests" timeout
+        res = th[i].response()
+        if res.status == 204:
+            doneCount += 1
+        else:
+            print(r['recipient'], 'Error:', res.status, ':', json.loads(res.data.decode('utf-8')))
+    return doneCount
+
+def deleteSuppressionList(recipBatch, uri, apiKey):
+    doneCount = 0
+    threadRecips = []                               # List collecting at most Nthreads recips
+    startT = time.time()                            # Measure time for batch
+    # Collect recipients together into mini-batches that will be handled concurrently
+    for r in recipBatch:
+        threadRecips.append(r)
+        if len(threadRecips) >= Nthreads:
+            threadAction(threadRecips, uri, apiKey)
+            threadRecips = []                       # Empty out, ready for next mini batch
+
+    if len(threadRecips) > 0:                       # Handle the final mini batch, if any
+        threadAction(threadRecips, uri, apiKey)
+
+    endT = time.time()
+    print('{0} entries deleted in {1:2.3f} seconds'.format(doneCount, endT - startT))
     return doneCount
 
 # Functions that operate on on a batch - each has a row entry as input, and returns a count of entries
