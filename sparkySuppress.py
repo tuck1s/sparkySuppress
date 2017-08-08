@@ -125,13 +125,15 @@ class deleter(threading.Thread):
         self.res = None
 
     def run(self):
-        self.res = self.s.delete(url=self.path, timeout=T, headers=self.headers)
-        pass
+        self.res = requests.delete(url=self.path, timeout=T, headers=self.headers)
 
     def response(self):
+        while self.res == None:
+            print('*** got here unexpectedly')
+            time.sleep(0.1)
         return(self.res)
 
-Nthreads = 10
+Nthreads = 20
 svec = [None] * Nthreads                                # Persistent sessions
 
 #  Launch multi-threaded deletions.  URL-quote the recipient part.
@@ -142,7 +144,7 @@ def threadAction(recipBatch, uri, apiKey):
         for i,v in enumerate(svec):
             svec[i] = requests.session()
     th = [None] * Nthreads  # Init empty array
-    h = {'Authorization': apiKey}
+    h = {'Authorization': apiKey, 'Content-Type': 'application/json', 'Accept': 'application/json'}
 
     for i,r in enumerate(recipBatch):
         path = uri + '/api/v1/suppression-list/' + quote(r['recipient'])
@@ -155,6 +157,7 @@ def threadAction(recipBatch, uri, apiKey):
         th[i].join(T + 10)  # Somewhat longer than the "requests" timeout
         res = th[i].response()
         if res.status_code == 204:
+            print(r['recipient'], 'deleted')
             doneCount += 1
         else:
             print(r['recipient'], 'Error:', res.status_code, ':', res.json())
@@ -168,11 +171,11 @@ def deleteSuppressionList(recipBatch, uri, apiKey):
     for r in recipBatch:
         threadRecips.append(r)
         if len(threadRecips) >= Nthreads:
-            threadAction(threadRecips, uri, apiKey)
+            doneCount += threadAction(threadRecips, uri, apiKey)
             threadRecips = []                       # Empty out, ready for next mini batch
 
     if len(threadRecips) > 0:                       # Handle the final mini batch, if any
-        threadAction(threadRecips, uri, apiKey)
+        doneCount += threadAction(threadRecips, uri, apiKey)
 
     endT = time.time()
     print('{0} entries deleted in {1:2.3f} seconds'.format(doneCount, endT - startT))
@@ -322,8 +325,10 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, **p):
     endT = time.time()
     print('\nSummary:\n{0:8d} entries processed in {1:2.2f} seconds\n{2:8d} good recipients\n{3:8d} invalid recipients\n{4:8d} duplicates will be skipped\n{5:8d} done on SparkPost'
         .format(addrsChecked, endT-startT, goodRecips, badRecips, duplicateRecips, doneRecips))
-    print('\n{0:8d} with valid flags\n{1:8d} have type={2} default applied\n'
-        .format(goodFlags, defaultedFlags, typeDefault))
+
+    if actionFunction != deleteSuppressionList:
+        print('\n{0:8d} with valid flags\n{1:8d} have type={2} default applied\n'
+            .format(goodFlags, defaultedFlags, typeDefault))
     return True
 
 # -----------------------------------------------------------------------------------------
