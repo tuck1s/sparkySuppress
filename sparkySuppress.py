@@ -115,7 +115,9 @@ def updateSuppressionList(recipBatch, uri, apiKey):
         exit(1)
 
 #
-# Performance improvement: use 'threading' class for concurrent deletions (each API-call deletes one entry)
+# Performance improvements: use 'threading' class for concurrent deletions (each API-call deletes one entry)
+# and keep sessions persistent
+#
 class deleter(threading.Thread):
     def __init__(self, path, headers, s):
         threading.Thread.__init__(self)
@@ -125,7 +127,7 @@ class deleter(threading.Thread):
         self.res = None
 
     def run(self):
-        self.res = requests.delete(url=self.path, timeout=T, headers=self.headers)
+        self.res = self.s.delete(url=self.path, timeout=T, headers=self.headers)
 
     def response(self):
         while self.res == None:
@@ -134,7 +136,7 @@ class deleter(threading.Thread):
         return(self.res)
 
 Nthreads = 20
-svec = [None] * Nthreads                                # Persistent sessions
+svec = [None] * Nthreads                                # Globally persistent sessions
 
 #  Launch multi-threaded deletions.  URL-quote the recipient part.
 def threadAction(recipBatch, uri, apiKey):
