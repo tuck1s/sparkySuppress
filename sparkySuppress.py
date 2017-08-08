@@ -125,13 +125,13 @@ class deleter(threading.Thread):
         self.res = None
 
     def run(self):
-        self.res = self.s.request('DELETE', url=self.path, timeout=T, headers=self.headers)
+        self.res = self.s.delete(url=self.path, timeout=T, headers=self.headers)
         pass
 
     def response(self):
         return(self.res)
 
-Nthreads = 1
+Nthreads = 10
 svec = [None] * Nthreads                                # Persistent sessions
 
 #  Launch multi-threaded deletions.  URL-quote the recipient part.
@@ -140,7 +140,7 @@ def threadAction(recipBatch, uri, apiKey):
     # Set up our connection pool
     if None in svec:
         for i,v in enumerate(svec):
-            svec[i] = urllib3.PoolManager(cert_reqs = 'CERT_REQUIRED', ca_certs = certifi.where() )
+            svec[i] = requests.session()
     th = [None] * Nthreads  # Init empty array
     h = {'Authorization': apiKey}
 
@@ -154,10 +154,10 @@ def threadAction(recipBatch, uri, apiKey):
     for i,r in enumerate(recipBatch):
         th[i].join(T + 10)  # Somewhat longer than the "requests" timeout
         res = th[i].response()
-        if res.status == 204:
+        if res.status_code == 204:
             doneCount += 1
         else:
-            print(r['recipient'], 'Error:', res.status, ':', json.loads(res.data.decode('utf-8')))
+            print(r['recipient'], 'Error:', res.status_code, ':', res.json())
     return doneCount
 
 def deleteSuppressionList(recipBatch, uri, apiKey):
