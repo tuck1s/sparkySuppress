@@ -2,15 +2,18 @@
 from __future__ import print_function
 from datetime import datetime
 import configparser, time, json, sys, os, csv, requests, pytz, threading
-import urllib3, certifi
 from urllib.parse import urlparse,parse_qs,quote
 from distutils.util import strtobool
 
 # Library https://github.com/JoshData/python-email-validator - see pip install instructions
 from email_validator import validate_email, EmailNotValidError
 
-T = 60                  # Global timeout value for API requests
+# Global timeout value for API requests
+T = 60
+
+# Values permissible in .csv files. Not all have to be used.
 flagNames = ('transactional', 'non_transactional')
+fieldNames = ('recipient', 'type', 'source', 'description', 'created','updated','subaccount_id')
 
 def printHelp():
     progName = sys.argv[0]
@@ -60,10 +63,12 @@ def stripQuotes(s):
     return s
 
 # API access functions - see https://developers.sparkpost.com/api/suppression-list.html
-def getSuppressionList(uri, apiKey, params):
+def getSuppressionList(uri, apiKey, params, subaccount_id):
     try:
         path = uri + '/api/v1/suppression-list'
         h = {'Authorization': apiKey, 'Accept': 'application/json'}
+        if subaccount_id:
+            h['X-MSYS-SUBACCOUNT'] = str(subaccount_id)
         moreToDo = True
         while moreToDo:
             response = requests.get(path, timeout=T, headers=h, params=params)
@@ -85,10 +90,12 @@ def getSuppressionList(uri, apiKey, params):
         print('error code', err.status_code)
         exit(1)
 
-def updateSuppressionList(recipBatch, uri, apiKey):
+def updateSuppressionList(recipBatch, uri, apiKey, subaccount_id):
     try:
         path = uri + '/api/v1/suppression-list'
         h = {'Authorization': apiKey, 'Content-Type': 'application/json', 'Accept': 'application/json'}
+        if subaccount_id:
+            h['X-MSYS-SUBACCOUNT'] = str(subaccount_id)
         body = json.dumps({'recipients': recipBatch})
         print('Updating {0:6d} entries to SparkPost'.format(len(recipBatch)), end=' ', flush=True)
 
@@ -132,7 +139,7 @@ class deleter(threading.Thread):
             self.res = self.s.delete(url=self.path, timeout=T, headers=self.headers)
             if self.res.status_code == 429:
                 if self.res.json()['errors'][0]['message'] == 'Too many requests':
-                    snooze = 120
+                    snooze = 10
                     print('.. pausing', snooze, 'seconds for rate-limiting')
                     time.sleep(snooze)
                     continue  # try again
@@ -142,19 +149,17 @@ class deleter(threading.Thread):
     def response(self):
         return(self.res)
 
-Nthreads = 20
-svec = [None] * Nthreads                                # Globally persistent sessions
-
 #  Launch multi-threaded deletions.  URL-quote the recipient part.
-def threadAction(recipBatch, uri, apiKey):
-    assert len(recipBatch) <= Nthreads
+def threadAction(recipBatch, uri, apiKey, subaccount_id):
     # Set up our connection pool
+    assert len(recipBatch) <= Nthreads
     if None in svec:
         for i,v in enumerate(svec):
-            svec[i] = requests.session()
-    th = [None] * Nthreads  # Init empty array
-    h = {'Authorization': apiKey, 'Content-Type': 'application/json', 'Accept': 'application/json'}
-
+            svec[i] = requests.session()        # global scope for persistent requests sessions
+    th = [None] * Nthreads                      # threads are created / destroyed each call
+    h = {'Authorization': apiKey}
+    if subaccount_id:
+        h['X-MSYS-SUBACCOUNT'] = str(subaccount_id)
     for i,r in enumerate(recipBatch):
         path = uri + '/api/v1/suppression-list/' + quote(r['recipient'])
         th[i] = deleter(path, h, svec[i])
@@ -166,25 +171,25 @@ def threadAction(recipBatch, uri, apiKey):
         th[i].join(T + 10)  # Somewhat longer than the "requests" timeout
         res = th[i].response()
         if res.status_code == 204:
-            print(r['recipient'], 'deleted')
             doneCount += 1
         else:
-            print(r['recipient'], 'Error:', res.status_code, ':', res.json())
+            print('  ',r['recipient'], 'Error:', res.status_code, ':', res.json())
     return doneCount
 
-def deleteSuppressionList(recipBatch, uri, apiKey):
+def deleteSuppressionList(recipBatch, uri, apiKey, subaccount_id):
     doneCount = 0
     threadRecips = []                               # List collecting at most Nthreads recips
+    print('Deleting {0} suppression list entries using {1} threads'.format(len(recipBatch), Nthreads))
     startT = time.time()                            # Measure time for batch
     # Collect recipients together into mini-batches that will be handled concurrently
     for r in recipBatch:
         threadRecips.append(r)
         if len(threadRecips) >= Nthreads:
-            doneCount += threadAction(threadRecips, uri, apiKey)
+            doneCount += threadAction(threadRecips, uri, apiKey, subaccount_id)
             threadRecips = []                       # Empty out, ready for next mini batch
 
     if len(threadRecips) > 0:                       # Handle the final mini batch, if any
-        doneCount += threadAction(threadRecips, uri, apiKey)
+        doneCount += threadAction(threadRecips, uri, apiKey, subaccount_id)
 
     endT = time.time()
     print('{0} entries deleted in {1:2.3f} seconds'.format(doneCount, endT - startT))
@@ -192,7 +197,7 @@ def deleteSuppressionList(recipBatch, uri, apiKey):
 
 # Functions that operate on on a batch - each has a row entry as input, and returns a count of entries
 # actually transacted on SparkPost.
-def noAction(r, uri, apiKey):
+def noAction(r, uri, apiKey, subAccount):
     return 0
 
 actionVector = {
@@ -202,7 +207,14 @@ actionVector = {
 }
 
 # Functions to perform specific tasks on entire list
-def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, **p):
+def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, subAccount, **p):
+    if 'from' in p:
+        print('Time from    :', p['from'])
+    if 'to' in p:
+        print('Time to      :', p['to'])
+    if subAccount:
+        print('Subaccount   :', subAccount)
+
     fh = csv.DictWriter(outfile, fieldnames=fList, restval='', extrasaction='ignore')
     fh.writeheader()
     suppPage = 1
@@ -210,7 +222,7 @@ def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, **p):
     morePages = True;
     while morePages:
         startT = time.time()                        # Measure time for each processing iteration
-        res = getSuppressionList(uri=baseUri, apiKey=apiKey, params=p)
+        res = getSuppressionList(uri=baseUri, apiKey=apiKey, params=p, subaccount_id = subAccount)
         if not res:                                 # Unexpected error - quit
             exit(1)
 
@@ -219,7 +231,7 @@ def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, **p):
         endT = time.time()
 
         if p['cursor'] == 'initial':
-            print('File fields: ', fList)
+            print('File fields  :', fList)
             print('Total entries to fetch: ', res['total_count'])
         print('Page {0:8d}: got {1:6d} entries in {2:2.3f} seconds'.format(suppPage, len(res['results']), endT - startT))
 
@@ -236,7 +248,9 @@ def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, **p):
                 print('Unexpected link in response: ', json.dumps(l))
                 exit(1)
 
-def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, **p):
+def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, descDefault, batchSize, subAccount):
+    if subAccount:
+        print('Subaccount   :', subAccount)
     f = csv.reader(infile)
     addrsChecked = 0
     goodRecips = 0
@@ -264,7 +278,7 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, **p):
         row = {}
         for i, h in enumerate(hdr):
             if r[i]:  # Only parse non-empty fields from this line.  Also accept older flagNames columns
-                if (h in ('recipient', 'type', 'description')) or (h in flagNames):
+                if (h in fieldNames) or (h in flagNames):
                     row[h] = r[i].strip()               # all fields are simple strings - strip leading/trailing whitespace
                 else:
                     print('Unexpected .csv file field name found: ', h)
@@ -312,6 +326,10 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, **p):
             row['type'] = typeDefault                               # Apply user-specified value
             defaultedFlags += 1
 
+        if not 'description' in row:
+            if descDefault:
+                row['description'] = descDefault                    # Apply user-specified value
+
         if recipOK:
             # construct a tuple for 'already seen' checking logic that includes 'type' flag, if given
             if 'type' in row:
@@ -325,12 +343,12 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, **p):
                 goodRecips += 1
                 seen.add(u)                         # TODO: handle flag-awareness on dups
                 recipBatch.append(row)              # Build up batches, for more efficient API usage
-                if len(recipBatch) >= p['per_page']:
-                    doneRecips += actionFunction(recipBatch, baseUri, apiKey)
+                if len(recipBatch) >= batchSize:
+                    doneRecips += actionFunction(recipBatch, baseUri, apiKey, subAccount)
                     recipBatch = []                 # Empty out, ready for next batch
 
     if len(recipBatch) > 0:                     # Handle the final batch remaining, if any
-        doneRecips += actionFunction(recipBatch, baseUri, apiKey)
+        doneRecips += actionFunction(recipBatch, baseUri, apiKey, subAccount)
     endT = time.time()
     print('\nSummary:\n{0:8d} entries processed in {1:2.2f} seconds\n{2:8d} good recipients\n{3:8d} invalid recipients\n{4:8d} duplicates will be skipped\n{5:8d} done on SparkPost'
         .format(addrsChecked, endT-startT, goodRecips, badRecips, duplicateRecips, doneRecips))
@@ -348,7 +366,7 @@ configFile = 'sparkpost.ini'
 config = configparser.ConfigParser()
 config.read_file(open(configFile))
 cfg = config['SparkPost']
-apiKey = cfg.get('Authorization', '')           # API key is mandatory
+apiKey = cfg.get('Authorization', '')                   # API key is mandatory
 if not apiKey:
     print('Error: missing Authorization line in ' + configFile)
     exit(1)
@@ -362,13 +380,19 @@ fList = properties.split(',')
 
 batchSize = cfg.getint('BatchSize', 10000)              # Use default batch size if not given in the .ini file
 
-typeDefault = cfg.get('TypeDefault')
+typeDefault = cfg.get('TypeDefault')                    # default applied to updates, if file doesn't contain type
 if not(typeDefault in flagNames):
     print('Invalid .ini file setting typeDefault = ', typeDefault, 'Must be', flagNames)
     exit(1)
 
-# Try the configured character encodings in order
+descDefault = cfg.get('DescriptionDefault')
+
 charEncs = cfg.get('FileCharacterEncodings', 'utf-8').split(',')
+
+Nthreads = cfg.getint('DeleteThreads', 10)
+svec = [None] * Nthreads                                # List will hold globally persistent sessions used for Delete only
+
+subAccount = cfg.getint('SubAccount', 0)                # Default 0 means 'master account'
 
 if len(sys.argv) >= 3:
     cmd = sys.argv[1]
@@ -379,11 +403,11 @@ if len(sys.argv) >= 3:
             for ce in charEncs:
                 with open(suppFname, 'r', newline='', encoding=ce) as infile:
                     try:
-                        l = 1                                   # Keep line number available in exception scope for ease of reporting
+                        l = 1                           # Keep line number available in exception scope for ease of reporting
                         print('Trying file', suppFname, 'with encoding:', ce)
                         for c in infile:
                             l += 1
-                        break                                   # Successfully read all lines - on to the next stage
+                        break                           # Successfully read all lines - on to the next stage
 
                     except Exception as e:
                         # If the file contains character set encoding anomalies we can't recover. At least provide helpful line number output
@@ -391,10 +415,12 @@ if len(sys.argv) >= 3:
 
             print('\tFile reads OK.\n\nLines in file:', l)
             with open(suppFname, 'r', newline='', encoding=ce) as infile:
-                processFile(infile, actionVector[cmd], baseUri, apiKey, typeDefault, per_page=batchSize)
+                if cmd=='delete':                       # keep batch sizes small for Delete, so we can see visible progress
+                    batchSize = min(batchSize, 10*Nthreads)
+                processFile(infile, actionVector[cmd], baseUri, apiKey, typeDefault, descDefault, batchSize, subAccount)
 
     elif cmd=='retrieve':
-        with open(suppFname, 'w', newline='') as outfile:
+        with open(suppFname, 'w', newline='', encoding=charEncs[0]) as outfile:
             # Check for optional time-range parameters
             fromTime = None;
             toTime = None;
@@ -411,12 +437,12 @@ if len(sys.argv) >= 3:
                     exit(1)
                 toTime = composeEventDateTimeFormatWithTZ(toTime, timeZone)
 
-                print('Retrieving SparkPost suppression-list entries from ' + fromTime + ' to ' + toTime + ' ' + timeZone + ' to', suppFname)
                 opts = {'from': fromTime, 'to': toTime, 'per_page': batchSize}      # Need this way, as 'from' is a Python keyword
-                RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, **opts)
             else:
-                print('Retrieving SparkPost suppression-list entries (any time-range) to', suppFname)
-                RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, per_page=batchSize)
+                opts = {'per_page': batchSize}
+            print('Retrieving SparkPost suppression-list entries to', suppFname, 'with file encoding=' + charEncs[0])
+            RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, subAccount, **opts)
+
     else:
         printHelp()
         exit(1)
