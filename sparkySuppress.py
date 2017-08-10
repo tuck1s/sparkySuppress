@@ -173,7 +173,11 @@ def threadAction(recipBatch, uri, apiKey, subaccount_id):
         if res.status_code == 204:
             doneCount += 1
         else:
-            print('  ',r['recipient'], 'Error:', res.status_code, ':', res.json())
+            # Allow for responses that aren't valid JSON, as these have been seen in the wild
+            try:
+                print('  ',r['recipient'], 'Error:', res.status_code, ':', res.json())
+            except:
+                print('  ',r['recipient'], 'Raw Error:', res)
     return doneCount
 
 def deleteSuppressionList(recipBatch, uri, apiKey, subaccount_id):
