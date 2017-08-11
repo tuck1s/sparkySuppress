@@ -1,0 +1,39 @@
+[SparkPost]
+# Sparkpost.com
+Authorization = <YOUR API KEY>
+#Host = demo.e.sparkpost.com                        # Only required for Enterprise service
+
+# Optional. What properties to put in files retrieved from SparkPost. Useful to keep file sizes down if you don't need all fields.
+# If omitted, defaults to recipient, type, description.
+#Properties = recipient,type,source,description,created,updated,subaccount_id
+
+# Optional. Timezone that from_time and to_time retrieve queries apply to.  If omitted, defaults to UTC.
+#Timezone = Europe/London
+
+# Optional.  If omitted, defaults to 10000 for updates and retrieves. Lower number means make more, smaller-sized, API requests.
+#BatchSize = 10000
+
+# Optional, if omitted defaults to 10. Number of parallel threads to run on Deletes.
+# Because Delete API is one-at-a-time, runs faster with more threads/http sessions.
+# Increase with caution, too many threads can stress your host, and will likely cause rate-limiting from SparkPost, which
+# defeats the object of going faster!
+#DeleteThreads = 10
+
+# Optional. Work within a subaccount.  If omitted, defaults to the master account (=0).
+#Subaccount = 2
+
+# Optional. File encodings used for reading your file during check/update/delete/retrieve.
+# Default value is utf-8. You can give a list of encodings to try, the tool will try each in turn until the file
+# reads properly.
+# If your file fails to read, check possible values to use on: https://docs.python.org/3.6/library/codecs.html#standard-encodings
+# For hints, see also: http://python-notes.curiousefficiency.org/en/latest/python3/text_file_processing.html
+#
+# For retrieve, the first encoding in the list is used to write the file.
+FileCharacterEncodings=utf-8,utf-16,ascii,latin-1
+
+# Optional. When updating with basic lists of email addresses that lack flags, apply the following default type.
+# if omitted, non_transactional will be used.
+TypeDefault = non_transactional
+
+# Optional. Add the following description to your imports.
+DescriptionDefault = sparkySuppress import

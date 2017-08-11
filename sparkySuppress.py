@@ -36,8 +36,8 @@ def printHelp():
     print('COMMANDS')
     print('    check                Validates the format of a file, checking that email addresses are well-formed, but does not upload them.')
     print('    retrieve             Gets your current suppression-list contents from SparkPost back into a file.')
-    print('    update               Uploads file contents to SparkPost.  Also runs checks.')
-    print('    delete               Delete entries from SparkPost.  Also runs checks,')
+    print('    update               Uploads file contents to SparkPost.  Also checks and reports input problems as it runs.')
+    print('    delete               Delete entries from SparkPost.  Also checks and reports input problems as it runs.')
 
 # Validate our input time format, which for simplicity is just to 1 minute resolution without timezone offset.
 def isExpectedEventDateTimeFormat(timestamp):
@@ -384,7 +384,7 @@ fList = properties.split(',')
 
 batchSize = cfg.getint('BatchSize', 10000)              # Use default batch size if not given in the .ini file
 
-typeDefault = cfg.get('TypeDefault')                    # default applied to updates, if file doesn't contain type
+typeDefault = cfg.get('TypeDefault', 'non_transactional')   # default applied to updates, if file doesn't contain type
 if not(typeDefault in flagNames):
     print('Invalid .ini file setting typeDefault = ', typeDefault, 'Must be', flagNames)
     exit(1)
