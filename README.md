@@ -61,7 +61,7 @@ COMMANDS
 
 ```
 
-## Input file format
+## Preparing input files for update
 As a minimum, the input file contains a list of email addresses:
 ```csv
 billybob@gmail.com
@@ -211,7 +211,8 @@ TypeDefault = non_transactional
 DescriptionDefault = sparkySuppress import
 ```
 
-`Timezone` is used to localise the from/to search times.  Applies to `retrieve` only.
+`Timezone` is used to localise the from/to search times.  Applies to `retrieve` only.  Uses the [pytz](http://pytz.sourceforge.net/#)
+library to accept human-readable timezone names from the [Olson Database.](https://en.wikipedia.org/wiki/Tz_database) `US/Eastern`, `America/New_York`, `Europe/London` are valid examples.
 
 `Subaccount` applies to retrieve, update and delete commands - e.g.
 
