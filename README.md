@@ -1,8 +1,8 @@
 # sparkySuppress
 SparkPost suppression-list management tool:
-- Check (format of your files prior to import)
-- Update to SparkPost (aka create if your list is currently empty)
+- Check format of your files (prior to import)
 - Retrieve back from SparkPost
+- Update to SparkPost (aka create if your list is currently empty)
 - Delete from SparkPost
 
 This is useful in the following scenarios:
@@ -12,12 +12,28 @@ Always a good idea from a deliverability standpoint to bring your suppressions w
 - Cleaning your suppression list out. Perhaps a rare requirement but it's there for you.
 
 ## Pre-requisites
-- Python3
 
-`pip3 install `
-
-##Usage
+Ensure you have `python3` and `pip3` using the following commands.
+If you don't have them, there are [install suggestions here.](https://www.sparkpost.com/blog/sparkpost-message-events-api/)
 ```bash
+$ python3 --version
+Python 3.5.1
+$ pip3 --version
+pip 9.0.1 from /usr/local/lib/python3.5/site-packages (python 3.5)
+```
+
+Install the following libraries:
+```bash
+$ pip3 install email_validator
+$ pip3 install requests
+$ pip3 install pytz
+```
+
+Install this tool using `git clone`.
+Rename `sparkpost.ini.example` to `sparkpost.ini`, and insert your API key.
+
+## Usage
+```
 $ ./sparkySuppress.py 
 
 NAME
@@ -61,7 +77,7 @@ anon15505125@demo.sink.sparkpostmail.com,transactional,Example data import
 
 ## Example output
 Checking a file (that has an error in it)
-```bash
+```
 $ ./sparkySuppress.py check 1klist-with-error.csv
 Trying file 1klist-with-error.csv with encoding: utf-8
         File reads OK.
@@ -81,10 +97,9 @@ Summary:
        0 have type=non_transactional default applied
 
 ```
-Email address checking is based on a cool library Library https://github.com/JoshData/python-email-validator.
 
 Updating SparkPost from a file:
-```bash
+```
 $ ./sparkySuppress.py update 100klist.csv 
 Trying file 100klist.csv with encoding: utf-8
         File reads OK.
@@ -109,7 +124,7 @@ Summary:
 API calls are batched for efficiency (batch size is configurable).
 
 Retrieving a file copy of your SparkPost suppression list:
-```bash
+```
 $ ./sparkySuppress.py retrieve getback.csv
 Retrieving SparkPost suppression-list entries to getback.csv with file encoding=utf-8
 File fields  : ['recipient', 'type', 'description']
@@ -121,7 +136,7 @@ Page        2: got  10000 entries in 3.604 seconds
 ```
 
 Retrieve entries from/to specific creation times (as per API docs):
-```bash
+```
 $ ./sparkySuppress.py retrieve mylist.csv 2017-08-11T17:00 2017-08-11T18:00
 Retrieving SparkPost suppression-list entries to mylist.csv with file encoding=utf-8
 Time from    : 2017-08-11T17:00:00+0100
@@ -132,7 +147,7 @@ Page        1: got      1 entries in 1.287 seconds
 ```
 
 Deleting entries from your SparkPost suppression list:
-```bash
+```
 ./sparkySuppress.py delete 1klist.csv
 Trying file 1klist.csv with encoding: utf-8
         File reads OK.
@@ -208,7 +223,7 @@ However `update` will always take the .ini file `Subaccount` setting, not anythi
 in the order given. For example, many files output from Excel will be in Latin-1, rather than the more
 universal UTF-8. The tool will attempt to read your file using each encoding, and if it finds anomalies, will
 try in the next encoding and so on.  Example:
-```bash
+```
 $ ./sparkySuppress.py check klist-1.csv
 Trying file klist-1.csv with encoding: utf-8
         Near line 1125 'utf-8' codec can't decode byte 0x9a in position 7198: invalid start byte
@@ -238,6 +253,8 @@ you can try setting threads to 1.
 ## See also
 [Using Suppression Lists](https://support.sparkpost.com/customer/portal/articles/1929891)
 
-[Uploading and Storing a Recipient List as a CSV file](https://support.sparkpost.com/customer/portal/articles/2351320)
+[Alternative method using the SparkPost UI - uploading and Storing a Recipient List as a CSV file](https://support.sparkpost.com/customer/portal/articles/2351320)
 
-[Generating test lists]()
+[Generating test suppression lists](https://www.sparkpost.com/blog/recipient-suppression-lists-python/)
+
+This tool makes use of this external [library for email address checking.](https://github.com/JoshData/python-email-validator)
