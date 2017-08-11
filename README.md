@@ -212,7 +212,17 @@ DescriptionDefault = sparkySuppress import
 ```
 
 `Timezone` is used to localise the from/to search times.  Applies to `retrieve` only.  Uses the [pytz](http://pytz.sourceforge.net/#)
-library to accept human-readable timezone names from the [Olson Database.](https://en.wikipedia.org/wiki/Tz_database) `US/Eastern`, `America/New_York`, `Europe/London` are valid examples.
+library to accept human-readable timezone names from over 500 entries in the [Olson Database.](https://en.wikipedia.org/wiki/Tz_database)
+`US/Eastern`, `America/New_York`, `America/Los_Angeles`, `Europe/London` are valid examples.
+
+The search times can naturally cross a DST threshold. For example, in `Timezone = America/New_York` you might request:
+```
+$ ./sparkySuppress.py retrieve mylist.csv 2017-03-01T00:00 2017-04-05T23:59
+Retrieving SparkPost suppression-list entries to mylist.csv with file encoding=utf-8
+Time from    : 2017-03-01T00:00:00-0500
+Time to      : 2017-04-05T23:59:00-0400
+```
+The offset is applied taking DST into account for those dates.
 
 `Subaccount` applies to retrieve, update and delete commands - e.g.
 
