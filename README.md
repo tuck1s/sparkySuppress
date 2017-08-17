@@ -224,7 +224,17 @@ Time to      : 2017-04-05T23:59:00-0400
 ```
 The offset is applied taking DST into account for those dates.
 
-`Subaccount` applies to retrieve, update and delete commands - e.g.
+`Subaccount` applies to retrieve, update and delete commands, for example:
+```
+./sparkySuppress.py update 1klist.csv 
+Trying file 1klist.csv with encoding: utf-8
+	File reads OK.
+
+Lines in file: 1002
+Subaccount   : 2
+Updating   1000 entries to SparkPost in 5.661 seconds
+:
+```
 
 `Properties` controls the columns written in retrieved files, and can give you the `subaccount_id` for each entry.
 However `update` will always take the .ini file `Subaccount` setting, not anything from the .csv file itself

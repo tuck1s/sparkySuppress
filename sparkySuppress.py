@@ -149,7 +149,7 @@ class deleter(threading.Thread):
     def response(self):
         return(self.res)
 
-#  Launch multi-threaded deletions.  URL-quote the recipient part.
+#  Launch multi-threaded deletions.  URL-quote the recipient part
 def threadAction(recipBatch, uri, apiKey, subaccount_id):
     # Set up our connection pool
     assert len(recipBatch) <= Nthreads
@@ -161,7 +161,7 @@ def threadAction(recipBatch, uri, apiKey, subaccount_id):
     if subaccount_id:
         h['X-MSYS-SUBACCOUNT'] = str(subaccount_id)
     for i,r in enumerate(recipBatch):
-        path = uri + '/api/v1/suppression-list/' + quote(r['recipient'])
+        path = uri + '/api/v1/suppression-list/' + quote(r['recipient'], safe='')   # ensure forwardslash gets escaped
         th[i] = deleter(path, h, svec[i])
         th[i].start()
 
