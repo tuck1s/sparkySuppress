@@ -265,35 +265,42 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, descDefaul
     defaultedFlags = 0
     seen = set()
     recipBatch = []
-    startT = time.time()  # Measure overall checking time
+    startT = time.time()                                # Measure overall checking time
     for r in f:
         l = f.line_num
-        if f.line_num == 1:  # Check if header row present
-            if 'recipient' in r:  # we've got an email header-row field - continue
+        if f.line_num == 1:                             # Check if header row present
+            if 'recipient' in r:                        # we've got an email header-row field - continue
                 hdr = r
-                continue
-            elif '@' in r[0] and len(r) == 1:  # Also accept headerless format with just email addresses
-                hdr = ['recipient']  # line 1 contains data - so continue processing
+                for i, h in enumerate(hdr):
+                    if not (h in fieldNames) and not (h in flagNames):
+                        print('Unexpected .csv file field name found: ', h)
+                        exit(1)
+                continue                                # all done with this header line
+
+            elif '@' in r[0] and len(r) == 1:           # Also accept headerless format with just email addresses
+                hdr = ['recipient']                     # line 1 contains data - so we go on to process this
             else:
                 print('Invalid .csv file header - must contain "recipient" field')
                 exit(1)
 
-        # Parse values from the line of the file into a dict.  Allows for column ordering to vary.
+        # Process lines containing entries
+        if len(r) != len(hdr):
+            print('  Line {0:8d} ! contains {1} fields, expecting {2} - stopping.'.format(f.line_num, len(r), len(hdr)))
+            exit(1)
+
+        # Parse values from the line of the file into a dict.  Takes column ordering from the header.
         row = {}
         for i, h in enumerate(hdr):
-            if r[i]:  # Only parse non-empty fields from this line.  Also accept older flagNames columns
-                if (h in fieldNames) or (h in flagNames):
-                    row[h] = r[i].strip()               # all fields are simple strings - strip leading/trailing whitespace
-                else:
-                    print('Unexpected .csv file field name found: ', h)
-                    exit(1)
+            r[i] = r[i].strip()                         # All fields are simple strings. Strip leading/trailing whitespace
+            if r[i]:                                    # Collect only non-empty fields
+                row[h] = r[i]
 
-        # Now check this row's contents
+        # Now check semantics of this row's field contents
         recipOK = False
-        if 'recipient' in row:
+        if 'recipient' in row.keys():
             try:
-                v = validate_email(row['recipient'], check_deliverability=False)  # don't check d12y, as too slow
-                # Take the normalised version and force it to lower-case .. suppression list does not like mixed case
+                # don't check d12y, as too slow. Take the normalised version and force it to lower-case for our use
+                v = validate_email(row['recipient'], check_deliverability=False)
                 row['recipient'] = v['email'].lower()
                 recipOK = True
             except EmailNotValidError as e:
@@ -301,32 +308,31 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, descDefaul
                 print('  Line {0:8d} ! {1} {2}'.format(f.line_num, row['recipient'], str(e)))
                 badRecips += 1
 
-        flagsOK = False
-        if 'type' in row:
-            row['type'] = stripQuotes(row['type'].lower())          # Clean up by lower-casing and stripping quotes
+        flagsOK = False                                             # Starting assumption - we don't have good flags
+        if 'type' in row.keys():
+            row['type'] = stripQuotes(row['type'].lower())          # Clean up by lower-casing and stripping quotes, if any
             if row['type'] in flagNames:
                 flagsOK = True
             else:
                 print('  Line {0:8d} w invalid "type" = {1}, must be {2}'.format(f.line_num, row['type'], flagNames))
-
-        for i in flagNames:                                         # older style flags (deprecated, but still valid)
-            if i in row:
-                row[i] = stripQuotes(row[i].title())                # Clean up by title-casing and stripping quotes
+        else:
+            # check for presence of older style flags (deprecated, but still acceptable).
+            # Both must be present. If we can't convert to bool, flag error.
+            if (flagNames[0] in row.keys()) and (flagNames[1] in row.keys()):
                 try:
-                    row[i] = bool(strtobool(row[i]))                # in-place replacement with bool type
-                    flagsOK = True
+                    for i in flagNames:
+                        row[i] = stripQuotes(row[i].title())        # Clean up by title-casing and stripping quotes, if any
+                        row[i] = bool(strtobool(row[i]))            # in-place conversion to native bool type
+                    flagsOK = True                                  # only if both convert OK
                 except ValueError:
                     print('  Line {0:8d} w invalid {1} = {2}, must be true or false'.format(f.line_num, i, row[i]))
-                    flagsOK = False
+            else:
+                print('  Line {0:8d} w need valid transactional & non_transactional flags: {1}'.format(f.line_num, row))
 
         addrsChecked += 1
         if flagsOK:
             goodFlags += 1
         else:
-            # Apply user-specified default using the new flag type - also purge any old-style flags
-            for i in flagNames:
-                if i in row:
-                    del row[i]
             row['type'] = typeDefault                               # Apply user-specified value
             defaultedFlags += 1
 
@@ -334,24 +340,26 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, descDefaul
             if descDefault:
                 row['description'] = descDefault                    # Apply user-specified value
 
+        # report, and filter out duplicate entries using set logic.
+        # Note the same address with different new-style 'type' value (transactional / non-transactional) is distinct.
         if recipOK:
-            # construct a tuple for 'already seen' checking logic that includes 'type' flag, if given
             if 'type' in row:
-                u = (row['recipient'], row['type'])
+                u = (row['recipient'], row['type'])                 # new-style flags - make a tuple
             else:
-                u = (row['recipient'], None)
+                u = (row['recipient'], None)                        # old-style flags
             if u in seen:
                 print('  Line {0:8d}   skipping duplicate {1}'.format(f.line_num, u))
                 duplicateRecips += 1
             else:
+                # This entry is good. Collect up into a batch, for more efficient API usage
                 goodRecips += 1
-                seen.add(u)                         # TODO: handle flag-awareness on dups
-                recipBatch.append(row)              # Build up batches, for more efficient API usage
+                seen.add(u)
+                recipBatch.append(row)
                 if len(recipBatch) >= batchSize:
                     doneRecips += actionFunction(recipBatch, baseUri, apiKey, subAccount)
-                    recipBatch = []                 # Empty out, ready for next batch
+                    recipBatch = []                                 # Empty out, ready for next batch
 
-    if len(recipBatch) > 0:                     # Handle the final batch remaining, if any
+    if len(recipBatch) > 0:                                         # Handle the final batch remaining, if any
         doneRecips += actionFunction(recipBatch, baseUri, apiKey, subAccount)
     endT = time.time()
     print('\nSummary:\n{0:8d} entries processed in {1:2.2f} seconds\n{2:8d} good recipients\n{3:8d} invalid recipients\n{4:8d} duplicates will be skipped\n{5:8d} done on SparkPost'
