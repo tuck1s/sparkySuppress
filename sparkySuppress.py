@@ -149,21 +149,35 @@ class deleter(threading.Thread):
     def response(self):
         return(self.res)
 
+#
+# Class holding persistent requests session IDs
+#
+class persistentSession():
+    def __init__(self, Nthreads):
+        # Set up our connection pool
+        self.svec = [None] * Nthreads
+        for i in range(0, Nthreads):
+            self.svec[i] = requests.session()
+        self.n = Nthreads
+
+    def id(self, i):
+        return self.svec[i]
+
+    def size(self):
+        return self.n
+
 #  Launch multi-threaded deletions.  URL-quote the recipient part
 def threadAction(recipBatch, uri, apiKey, subaccount_id):
-    # Set up our connection pool
-    assert len(recipBatch) <= Nthreads
-    if None in svec:
-        for i,v in enumerate(svec):
-            svec[i] = requests.session()        # global scope for persistent requests sessions
-    th = [None] * Nthreads                      # threads are created / destroyed each call
+    assert len(recipBatch) <= persist.size()    # Check we have adequate connection pool
+    th = [None] * persist.size()                # threads are created / destroyed each call
     h = {'Authorization': apiKey}
     if subaccount_id:
         h['X-MSYS-SUBACCOUNT'] = str(subaccount_id)
     for i,r in enumerate(recipBatch):
-        path = uri + '/api/v1/suppression-list/' + quote(r['recipient'], safe='')   # ensure forwardslash gets escaped
-        th[i] = deleter(path, h, svec[i])
-        th[i].start()
+        path = uri + '/api/v1/suppression-list/' + quote(r['recipient'], safe='@')   # ensure forwardslash gets escaped
+        s = persist.id(i)
+        th[i] = deleter(path, h, s)
+        th[i].start()                           # trigger the thread run method
 
     # Wait for the threads to come back
     doneCount = 0
@@ -402,7 +416,7 @@ descDefault = cfg.get('DescriptionDefault')
 charEncs = cfg.get('FileCharacterEncodings', 'utf-8').split(',')
 
 Nthreads = cfg.getint('DeleteThreads', 10)
-svec = [None] * Nthreads                                # List will hold globally persistent sessions used for Delete only
+persist = persistentSession(Nthreads)                   # hold a set of persistent 'requests' sessions
 
 subAccount = cfg.getint('SubAccount', 0)                # Default 0 means 'master account'
 
