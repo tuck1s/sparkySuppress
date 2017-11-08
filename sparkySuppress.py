@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import print_function
 from datetime import datetime
-import configparser, time, json, sys, os, csv, requests, pytz, threading
+import configparser, time, json, sys, os, csv, requests, pytz, threading, validators
 from urllib.parse import urlparse,parse_qs,quote
 from distutils.util import strtobool
 
@@ -384,6 +384,27 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, descDefaul
             .format(goodFlags, defaultedFlags, typeDefault))
     return True
 
+# Check we have a valid SparkPost API endpoint URL
+def checkValidSparkPostEndpoint(url):
+    if str.startswith(url, 'https://'):
+        fullurl = url
+    else:
+        fullurl = 'https://' + url                          # prepend the access method, if not already given
+
+    if not validators.url(fullurl):
+        print('Error: Host value malformed:', fullurl)
+        if '#' in fullurl:
+            print('NOTE: .ini file # comment character must be at beginning of line.')
+        exit(1)
+    else:
+        # Just ping the bare endpoint, see if we get a text reply
+        res = requests.get(fullurl)
+        if res.status_code != 200 or not ('sparkpost' in res.text) :
+            print('URL ',fullurl, 'not a valid SparkPost API endpoint')
+            exit(1)
+    # Otherwise OK
+    return fullurl
+
 # -----------------------------------------------------------------------------------------
 # Main code
 # -----------------------------------------------------------------------------------------
@@ -396,7 +417,9 @@ apiKey = cfg.get('Authorization', '')                   # API key is mandatory
 if not apiKey:
     print('Error: missing Authorization line in ' + configFile)
     exit(1)
-baseUri = 'https://' + cfg.get('Host', 'api.sparkpost.com')
+
+baseUri = checkValidSparkPostEndpoint(cfg.get('Host', 'api.sparkpost.com')) # If not specified, default to standard
+print('Using SparkPost API endpoint:', baseUri)
 
 timeZone = cfg.get('Timezone', 'UTC')                   # If not specified, default to UTC
 

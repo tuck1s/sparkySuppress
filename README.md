@@ -22,11 +22,15 @@ $ pip3 --version
 pip 9.0.1 from /usr/local/lib/python3.5/site-packages (python 3.5)
 ```
 
-Install the following libraries:
+Install the following libraries
 ```bash
-$ pip3 install email_validator
-$ pip3 install requests
-$ pip3 install pytz
+$ pip3 install email_validator requests pytz validators
+```
+
+On your platform, you may need `sudo` in front of this command, and your `pip` command may be named differently.  For example, in Amazon EC2 Linux, use
+
+```bash
+$ sudo pip-3.6 install email_validator requests pytz validators
 ```
 
 Install this tool using `git clone`.
@@ -171,9 +175,10 @@ Full set of options are as per `sparkpost.ini.example` file included in this pro
 
 ```ini
 [SparkPost]
-# Sparkpost.com
 Authorization = <YOUR API KEY>
-#Host = demo.e.sparkpost.com                        # Only required for Enterprise service
+
+# Host specifier is only required for Enterprise service
+#Host = demo.e.sparkpost.com
 
 # Optional. What properties to put in files retrieved from SparkPost. Useful to keep file sizes down if you don't need all fields.
 # If omitted, defaults to recipient, type, description.
@@ -210,6 +215,9 @@ TypeDefault = non_transactional
 # Optional. Add the following description to your imports.
 DescriptionDefault = sparkySuppress import
 ```
+
+The `Host` address can begin with `https://`. If omitted, this will be added by the tool. The tool now checks the address is well-formed and
+is a valid SparkPost API endpoint.
 
 `Timezone` is used to localise the from/to search times.  Applies to `retrieve` only.  Uses the [pytz](http://pytz.sourceforge.net/#)
 library to accept human-readable timezone names from over 500 entries in the [Olson Database.](https://en.wikipedia.org/wiki/Tz_database)
