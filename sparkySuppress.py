@@ -386,8 +386,11 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, descDefaul
 
 # Check we have a valid SparkPost API endpoint URL
 def checkValidSparkPostEndpoint(url):
-    if str.startswith(url, 'https://'):
+    if str.startswith(url, 'https'):
         fullurl = url
+    elif str.startswith(url, 'http'):                       # catch any flaky cases
+        print('Error: Host value must use https: not', url)
+        exit(1)
     else:
         fullurl = 'https://' + url                          # prepend the access method, if not already given
 
