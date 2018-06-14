@@ -38,3 +38,6 @@ TypeDefault = non_transactional
 
 # Optional. Add the following description to your imports.
 DescriptionDefault = sparkySuppress import
+
+# Optional. Tune the snooze time used when 429 rate-limiting replies received. If omitted, defaults to 10 seconds.
+# SnoozeTime = 2

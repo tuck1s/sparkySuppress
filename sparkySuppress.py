@@ -63,12 +63,12 @@ def stripQuotes(s):
     return s
 
 # API access functions - see https://developers.sparkpost.com/api/suppression-list.html
-def getSuppressionList(uri, apiKey, params, subaccount_id):
+def getSuppressionList(uri, apiKey, params, cfgGlobalSubAccount, snooze):
     try:
         path = uri + '/api/v1/suppression-list'
         h = {'Authorization': apiKey, 'Accept': 'application/json'}
-        if subaccount_id:
-            h['X-MSYS-SUBACCOUNT'] = str(subaccount_id)
+        if cfgGlobalSubAccount:
+            h['X-MSYS-SUBACCOUNT'] = str(cfgGlobalSubAccount)
         moreToDo = True
         while moreToDo:
             response = requests.get(path, timeout=T, headers=h, params=params)
@@ -78,7 +78,6 @@ def getSuppressionList(uri, apiKey, params, subaccount_id):
                 return response.json()
             elif response.status_code == 429:
                 if response.json()['errors'][0]['message'] == 'Too many requests':
-                    snooze = 120
                     print('.. pausing', snooze, 'seconds for rate-limiting')
                     time.sleep(snooze)
                     continue                # try again
@@ -90,48 +89,66 @@ def getSuppressionList(uri, apiKey, params, subaccount_id):
         print('error code', err.status_code)
         exit(1)
 
-def updateSuppressionList(recipBatch, uri, apiKey, subaccount_id):
+def updateSuppressionListForSubaccount(rb, uri, apiKey, subacc):
+    path = uri + '/api/v1/suppression-list'
+    h = {'Authorization': apiKey, 'Content-Type': 'application/json', 'Accept': 'application/json'}
+    if subacc:
+        h['X-MSYS-SUBACCOUNT'] = str(subacc)
+        s_str = 'subaccount ' + str(subacc)
+    else:
+        s_str = 'master account'
+    body = json.dumps({'recipients': rb})
+    print('Updating {:6d} entries to SparkPost, {}'.format(len(rb), s_str), end=' ', flush=True)
     try:
-        path = uri + '/api/v1/suppression-list'
-        h = {'Authorization': apiKey, 'Content-Type': 'application/json', 'Accept': 'application/json'}
-        if subaccount_id:
-            h['X-MSYS-SUBACCOUNT'] = str(subaccount_id)
-        body = json.dumps({'recipients': recipBatch})
-        print('Updating {0:6d} entries to SparkPost'.format(len(recipBatch)), end=' ', flush=True)
-
-        startT = time.time()                        # Measure time for each processing iteration
+        startT = time.time()  # Measure time for each processing iteration
         response = requests.put(path, timeout=T, headers=h, data=body)      # Params not needed
         endT = time.time()
-        print('in {0:2.3f} seconds'.format(endT - startT))
+        print('in {:2.3f} seconds'.format(endT - startT))
         if response.status_code == 200:
-            return len(recipBatch)
+            return len(rb)
         else:
             print('Error:', response.status_code, ':', response.text)
-            # If we do get an error - might be solvable. Split batch into two halves and retry
-            if len(recipBatch) < 2:
-                print('Error - could not update: ', body)
-                return 0                                    # Give up
-            else:
-                half = len(recipBatch) // 2                 # integer division
-                r1 = updateSuppressionList(recipBatch[:half], uri, apiKey)
-                r2 = updateSuppressionList(recipBatch[half:], uri, apiKey)
-                return r1 + r2                              # indicate successful entries done
-
+            print('Error - could not update: ', body)
+            return 0                                # Give up
     except ConnectionError as err:
         print('error code', err.status_code)
         exit(1)
+
+def updateSuppressionList(recipBatch, uri, apiKey, cfgGlobalSubAccount, snooze):
+    # split into distinct groups, based on subaccount_id where present in the recipient batch data, else use config
+    rbSubaccountSpecific = {}
+    rbGlobal = []
+    for r in recipBatch:
+        if 'subaccount_id' in r.keys():
+            s = int(r['subaccount_id'])
+            if not s in rbSubaccountSpecific.keys():
+                rbSubaccountSpecific[s] = []                # initialise the list
+            rbSubaccountSpecific[s].append(r)
+        elif cfgGlobalSubAccount:
+            s = int(cfgGlobalSubAccount)
+            if not s in rbSubaccountSpecific.keys():
+                rbSubaccountSpecific[s] = []                # initialise the list
+            rbSubaccountSpecific[s].append(r)
+        else:
+            rbGlobal.append(r)
+    # Now got one global list, and a dict of N subaccount-specific ones
+    done = updateSuppressionListForSubaccount(rbGlobal, uri, apiKey, None)
+    for subacc, rb in rbSubaccountSpecific.items():
+        done += updateSuppressionListForSubaccount(rb, uri, apiKey, subacc)
+    return done
 
 #
 # Performance improvements: use 'threading' class for concurrent deletions (each API-call deletes one entry)
 # and keep sessions persistent
 #
 class deleter(threading.Thread):
-    def __init__(self, path, headers, s):
+    def __init__(self, path, headers, s, snooze):
         threading.Thread.__init__(self)
         self.path = path
         self.headers = headers
         self.s = s
         self.res = None
+        self.snooze = snooze
 
     def run(self):
         moreToDo = True
@@ -139,9 +156,8 @@ class deleter(threading.Thread):
             self.res = self.s.delete(url=self.path, timeout=T, headers=self.headers)
             if self.res.status_code == 429:
                 if self.res.json()['errors'][0]['message'] == 'Too many requests':
-                    snooze = 10
-                    print('.. pausing', snooze, 'seconds for rate-limiting')
-                    time.sleep(snooze)
+                    print('.. pausing', self.snooze, 'seconds for rate-limiting')
+                    time.sleep(self.snooze)
                     continue  # try again
             else:
                 return
@@ -167,16 +183,18 @@ class persistentSession():
         return self.n
 
 #  Launch multi-threaded deletions.  URL-quote the recipient part
-def threadAction(recipBatch, uri, apiKey, subaccount_id):
+def threadAction(recipBatch, uri, apiKey, cfgGlobalSubAccount, snooze):
     assert len(recipBatch) <= persist.size()    # Check we have adequate connection pool
     th = [None] * persist.size()                # threads are created / destroyed each call
-    h = {'Authorization': apiKey}
-    if subaccount_id:
-        h['X-MSYS-SUBACCOUNT'] = str(subaccount_id)
     for i,r in enumerate(recipBatch):
-        path = uri + '/api/v1/suppression-list/' + quote(r['recipient'], safe='@')   # ensure forwardslash gets escaped
+        h = {'Authorization': apiKey}           # build each request's header from clean start
+        if 'subaccount_id' in r:
+            h['X-MSYS-SUBACCOUNT'] = r['subaccount_id']                             # entry-specific subaccount value
+        elif cfgGlobalSubAccount:
+            h['X-MSYS-SUBACCOUNT'] = cfgGlobalSubAccount
+        path = uri + '/api/v1/suppression-list/' + quote(r['recipient'], safe='@')  # ensure forwardslash gets escaped
         s = persist.id(i)
-        th[i] = deleter(path, h, s)
+        th[i] = deleter(path, h, s, snooze)
         th[i].start()                           # trigger the thread run method
 
     # Wait for the threads to come back
@@ -194,7 +212,7 @@ def threadAction(recipBatch, uri, apiKey, subaccount_id):
                 print('  ',r['recipient'], 'Raw Error:', res)
     return doneCount
 
-def deleteSuppressionList(recipBatch, uri, apiKey, subaccount_id):
+def deleteSuppressionList(recipBatch, uri, apiKey, cfgGlobalSubAccount, snooze):
     doneCount = 0
     threadRecips = []                               # List collecting at most Nthreads recips
     print('Deleting {0} suppression list entries using {1} threads'.format(len(recipBatch), Nthreads))
@@ -203,11 +221,11 @@ def deleteSuppressionList(recipBatch, uri, apiKey, subaccount_id):
     for r in recipBatch:
         threadRecips.append(r)
         if len(threadRecips) >= Nthreads:
-            doneCount += threadAction(threadRecips, uri, apiKey, subaccount_id)
+            doneCount += threadAction(threadRecips, uri, apiKey, cfgGlobalSubAccount, snooze)
             threadRecips = []                       # Empty out, ready for next mini batch
 
     if len(threadRecips) > 0:                       # Handle the final mini batch, if any
-        doneCount += threadAction(threadRecips, uri, apiKey, subaccount_id)
+        doneCount += threadAction(threadRecips, uri, apiKey, cfgGlobalSubAccount, snooze)
 
     endT = time.time()
     print('{0} entries deleted in {1:2.3f} seconds'.format(doneCount, endT - startT))
@@ -215,7 +233,7 @@ def deleteSuppressionList(recipBatch, uri, apiKey, subaccount_id):
 
 # Functions that operate on on a batch - each has a row entry as input, and returns a count of entries
 # actually transacted on SparkPost.
-def noAction(r, uri, apiKey, subAccount):
+def noAction(r, uri, apiKey, subAccount, snooze):
     return 0
 
 actionVector = {
@@ -225,7 +243,7 @@ actionVector = {
 }
 
 # Functions to perform specific tasks on entire list
-def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, subAccount, **p):
+def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, subAccount, snooze, **p):
     if 'from' in p:
         print('Time from    :', p['from'])
     if 'to' in p:
@@ -240,7 +258,7 @@ def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, subAccount, **p):
     morePages = True;
     while morePages:
         startT = time.time()                        # Measure time for each processing iteration
-        res = getSuppressionList(uri=baseUri, apiKey=apiKey, params=p, subaccount_id = subAccount)
+        res = getSuppressionList(uri=baseUri, apiKey=apiKey, params=p, cfgGlobalSubAccount= subAccount, snooze = snooze)
         if not res:                                 # Unexpected error - quit
             exit(1)
 
@@ -266,9 +284,9 @@ def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, subAccount, **p):
                 print('Unexpected link in response: ', json.dumps(l))
                 exit(1)
 
-def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, descDefault, batchSize, subAccount):
-    if subAccount:
-        print('Subaccount   :', subAccount)
+def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, descDefault, batchSize, cfgGlobalSubAccount, snooze):
+    if cfgGlobalSubAccount:
+        print('.ini file specified subaccount filter:', cfgGlobalSubAccount)
     f = csv.reader(infile)
     addrsChecked = 0
     goodRecips = 0
@@ -370,11 +388,11 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, descDefaul
                 seen.add(u)
                 recipBatch.append(row)
                 if len(recipBatch) >= batchSize:
-                    doneRecips += actionFunction(recipBatch, baseUri, apiKey, subAccount)
+                    doneRecips += actionFunction(recipBatch, baseUri, apiKey, cfgGlobalSubAccount, snooze)
                     recipBatch = []                                 # Empty out, ready for next batch
 
     if len(recipBatch) > 0:                                         # Handle the final batch remaining, if any
-        doneRecips += actionFunction(recipBatch, baseUri, apiKey, subAccount)
+        doneRecips += actionFunction(recipBatch, baseUri, apiKey, cfgGlobalSubAccount, snooze)
     endT = time.time()
     print('\nSummary:\n{0:8d} entries processed in {1:2.2f} seconds\n{2:8d} good recipients\n{3:8d} invalid recipients\n{4:8d} duplicates will be skipped\n{5:8d} done on SparkPost'
         .format(addrsChecked, endT-startT, goodRecips, badRecips, duplicateRecips, doneRecips))
@@ -444,7 +462,9 @@ charEncs = cfg.get('FileCharacterEncodings', 'utf-8').split(',')
 Nthreads = cfg.getint('DeleteThreads', 10)
 persist = persistentSession(Nthreads)                   # hold a set of persistent 'requests' sessions
 
-subAccount = cfg.getint('SubAccount', 0)                # Default 0 means 'master account'
+cfgGlobalSubAccount = cfg.get('SubAccount', None)       # default to None if not provided
+
+cfgSnooze = cfg.getint('SnoozeTime', 10)                # if it's set in the config file, use it
 
 if len(sys.argv) >= 3:
     cmd = sys.argv[1]
@@ -469,7 +489,7 @@ if len(sys.argv) >= 3:
             with open(suppFname, 'r', newline='', encoding=ce) as infile:
                 if cmd=='delete':                       # keep batch sizes small for Delete, so we can see visible progress
                     batchSize = min(batchSize, 10*Nthreads)
-                processFile(infile, actionVector[cmd], baseUri, apiKey, typeDefault, descDefault, batchSize, subAccount)
+                processFile(infile, actionVector[cmd], baseUri, apiKey, typeDefault, descDefault, batchSize, cfgGlobalSubAccount, cfgSnooze)
 
     elif cmd=='retrieve':
         with open(suppFname, 'w', newline='', encoding=charEncs[0]) as outfile:
@@ -493,7 +513,7 @@ if len(sys.argv) >= 3:
             else:
                 opts = {'per_page': batchSize}
             print('Retrieving SparkPost suppression-list entries to', suppFname, 'with file encoding=' + charEncs[0])
-            RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, subAccount, **opts)
+            RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, cfgGlobalSubAccount, **opts)
 
     else:
         printHelp()
