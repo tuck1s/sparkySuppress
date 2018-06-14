@@ -178,7 +178,7 @@ Full set of options are as per `sparkpost.ini.example` file included in this pro
 Authorization = <YOUR API KEY>
 
 # Host specifier is only required for Enterprise service
-#Host = demo.e.sparkpost.com
+#Host = demo.api.e.sparkpost.com
 
 # Optional. What properties to put in files retrieved from SparkPost. Useful to keep file sizes down if you don't need all fields.
 # If omitted, defaults to recipient, type, description.
@@ -214,6 +214,9 @@ TypeDefault = non_transactional
 
 # Optional. Add the following description to your imports.
 DescriptionDefault = sparkySuppress import
+
+# Optional. Tune the snooze time used when 429 rate-limiting replies received. If omitted, defaults to 10 seconds.
+# SnoozeTime = 2
 ```
 
 The `Host` address can begin with `https://`. If omitted, this will be added by the tool. The tool now checks the address is well-formed and
@@ -232,7 +235,7 @@ Time to      : 2017-04-05T23:59:00-0400
 ```
 The offset is applied taking DST into account for those dates.
 
-`Subaccount` applies to retrieve, update and delete commands, for example:
+`Subaccount` applies as a filter to the retrieve command, and provides a default for the update and delete commands, for example:
 ```
 ./sparkySuppress.py update 1klist.csv 
 Trying file 1klist.csv with encoding: utf-8
@@ -245,8 +248,15 @@ Updating   1000 entries to SparkPost in 5.661 seconds
 ```
 
 `Properties` controls the columns written in retrieved files, and can give you the `subaccount_id` for each entry.
-However `update` will always take the .ini file `Subaccount` setting, not anything from the .csv file itself
-(as per current SparkPost .csv file upload behaviour).
+
+### Subaccount handling for update and delete
+
+The .csv file `subaccount_id` field, when present in the file header
+and defined in an entry, takes precedence over the .ini file `Subaccount` setting (which is used as a default).
+
+For efficiency `update` splits into sub-batches, then makes each API call with common `subaccount_id` values.
+
+### Input file character encodings preference
 
 `FileCharacterEncodings` is a cool feature - the tool will attempt to read your input files using encodings
 in the order given. For example, many files output from Excel will be in Latin-1, rather than the more
@@ -267,6 +277,8 @@ Lines in file: 8496
 :
 :
 ```
+
+For the `retrieve` command, file *outputs* are in UTF-8 encoding.
 
 ## Performance considerations
 Update and retrieve commands are efficient with larger batch sizes. The default of 10000 is ideal, unless you have
