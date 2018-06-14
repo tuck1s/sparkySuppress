@@ -258,7 +258,7 @@ def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, subAccount, snooze, 
     morePages = True;
     while morePages:
         startT = time.time()                        # Measure time for each processing iteration
-        res = getSuppressionList(uri=baseUri, apiKey=apiKey, params=p, cfgGlobalSubAccount= subAccount, snooze = snooze)
+        res = getSuppressionList(baseUri, apiKey, p, subAccount, snooze)
         if not res:                                 # Unexpected error - quit
             exit(1)
 
@@ -513,7 +513,7 @@ if len(sys.argv) >= 3:
             else:
                 opts = {'per_page': batchSize}
             print('Retrieving SparkPost suppression-list entries to', suppFname, 'with file encoding=' + charEncs[0])
-            RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, cfgGlobalSubAccount, **opts)
+            RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, cfgGlobalSubAccount, cfgSnooze, **opts)
 
     else:
         printHelp()
