@@ -13,27 +13,23 @@ Always a good idea from a deliverability standpoint to bring your suppressions w
 
 ## Pre-requisites
 
-Ensure you have `python3` and `pip3` using the following commands.
-If you don't have them, there are [install suggestions here.](https://www.sparkpost.com/blog/sparkpost-message-events-api/)
-```bash
-$ python3 --version
-Python 3.5.1
-$ pip3 --version
-pip 9.0.1 from /usr/local/lib/python3.5/site-packages (python 3.5)
+Firstly ensure you have `python3`, `pip` and `git`.
+
+## Easy installation
+
+Next, get the project. Install `pipenv`, and use this to install the project dependencies.
+```
+git clone https://github.com/tuck1s/sparkySuppress.git
+cd sparkySuppress
+pip install --user pipenv
+pipenv install
+pipenv shell
 ```
 
-Install the following libraries
-```bash
-$ pip3 install email_validator requests pytz validators
-```
+Note: In the above commands, you may need to run `pip3` instead of `pip`.
 
-On your platform, you may need `sudo` in front of this command, and your `pip` command may be named differently.  For example, in Amazon EC2 Linux, use
+You can now type `./sparkySuppress.py` and see usage info.
 
-```bash
-$ sudo pip-3.6 install email_validator requests pytz validators
-```
-
-Install this tool using `git clone`.
 Rename `sparkpost.ini.example` to `sparkpost.ini`, and insert your API key.
 
 ## Usage

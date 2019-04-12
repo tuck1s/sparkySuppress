@@ -374,11 +374,9 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, descDefaul
 
         # report, and filter out duplicate entries using set logic.
         # Note the same address with different new-style 'type' value (transactional / non-transactional) is distinct.
+        # Also entries for different subaccounts / master should also be distinct.
         if recipOK:
-            if 'type' in row:
-                u = (row['recipient'], row['type'])                 # new-style flags - make a tuple
-            else:
-                u = (row['recipient'], None)                        # old-style flags
+            u = (row.get('recipient'), row.get('type'), row.get('subaccount_id'))
             if u in seen:
                 print('  Line {0:8d}   skipping duplicate {1}'.format(f.line_num, u))
                 duplicateRecips += 1
