@@ -15,6 +15,7 @@ T = 60
 flagNames = ('transactional', 'non_transactional')
 fieldNames = ('recipient', 'type', 'source', 'description', 'created','updated','subaccount_id')
 
+
 def printHelp():
     progName = sys.argv[0]
     shortProgName = os.path.basename(progName)
@@ -39,6 +40,7 @@ def printHelp():
     print('    update               Uploads file contents to SparkPost.  Also checks and reports input problems as it runs.')
     print('    delete               Delete entries from SparkPost.  Also checks and reports input problems as it runs.')
 
+
 # Validate our input time format, which for simplicity is just to 1 minute resolution without timezone offset.
 def isExpectedEventDateTimeFormat(timestamp):
     format_string = '%Y-%m-%dT%H:%M'
@@ -48,6 +50,7 @@ def isExpectedEventDateTimeFormat(timestamp):
     except ValueError:
         return False
 
+
 # Take a naive time value, compose it with the named timezone, giving a datetime with numeric TZ offset.
 # The offset will vary with DST depending on your locale / time of year.
 def composeEventDateTimeFormatWithTZ(t, tzName):
@@ -56,11 +59,13 @@ def composeEventDateTimeFormatWithTZ(t, tzName):
     tstr = t+':00'+td.strftime('%z')          # Compose with seconds field and timezone field
     return tstr
 
+
 # Strip initial and final quotes from strings, if present (either single, or double quotes in pairs)
 def stripQuotes(s):
     if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
         s = s[1:-1]
     return s
+
 
 # API access functions - see https://developers.sparkpost.com/api/suppression-list.html
 def getSuppressionList(uri, apiKey, params, cfgGlobalSubAccount, snooze):
@@ -89,6 +94,7 @@ def getSuppressionList(uri, apiKey, params, cfgGlobalSubAccount, snooze):
         print('error code', err.status_code)
         exit(1)
 
+
 def updateSuppressionListForSubaccount(rb, uri, apiKey, subacc):
     path = uri + '/api/v1/suppression-list'
     h = {'Authorization': apiKey, 'Content-Type': 'application/json', 'Accept': 'application/json'}
@@ -114,6 +120,7 @@ def updateSuppressionListForSubaccount(rb, uri, apiKey, subacc):
         print('error code', err.status_code)
         exit(1)
 
+
 def updateSuppressionList(recipBatch, uri, apiKey, cfgGlobalSubAccount, snooze):
     # split into distinct groups, based on subaccount_id where present in the recipient batch data, else use config
     rbSubaccountSpecific = {}
@@ -136,6 +143,7 @@ def updateSuppressionList(recipBatch, uri, apiKey, cfgGlobalSubAccount, snooze):
     for subacc, rb in rbSubaccountSpecific.items():
         done += updateSuppressionListForSubaccount(rb, uri, apiKey, subacc)
     return done
+
 
 #
 # Performance improvements: use 'threading' class for concurrent deletions (each API-call deletes one entry)
@@ -165,6 +173,7 @@ class deleter(threading.Thread):
     def response(self):
         return(self.res)
 
+
 #
 # Class holding persistent requests session IDs
 #
@@ -182,16 +191,16 @@ class persistentSession():
     def size(self):
         return self.n
 
+
 #  Launch multi-threaded deletions.  URL-quote the recipient part
 def threadAction(recipBatch, uri, apiKey, cfgGlobalSubAccount, snooze):
     assert len(recipBatch) <= persist.size()    # Check we have adequate connection pool
     th = [None] * persist.size()                # threads are created / destroyed each call
     for i,r in enumerate(recipBatch):
-        h = {'Authorization': apiKey}           # build each request's header from clean start
-        if 'subaccount_id' in r:
-            h['X-MSYS-SUBACCOUNT'] = r['subaccount_id']                             # entry-specific subaccount value
-        elif cfgGlobalSubAccount:
-            h['X-MSYS-SUBACCOUNT'] = cfgGlobalSubAccount
+        h = {
+            'Authorization': apiKey,           # build each request's header from clean start
+            'X-MSYS-SUBACCOUNT': r.get('subaccount_id', cfgGlobalSubAccount)
+        }
         path = uri + '/api/v1/suppression-list/' + quote(r['recipient'], safe='@')  # ensure forwardslash gets escaped
         s = persist.id(i)
         th[i] = deleter(path, h, s, snooze)
@@ -212,6 +221,7 @@ def threadAction(recipBatch, uri, apiKey, cfgGlobalSubAccount, snooze):
                 print('  ',r['recipient'], 'Raw Error:', res)
     return doneCount
 
+
 def deleteSuppressionList(recipBatch, uri, apiKey, cfgGlobalSubAccount, snooze):
     doneCount = 0
     threadRecips = []                               # List collecting at most Nthreads recips
@@ -231,16 +241,19 @@ def deleteSuppressionList(recipBatch, uri, apiKey, cfgGlobalSubAccount, snooze):
     print('{0} entries deleted in {1:2.3f} seconds'.format(doneCount, endT - startT))
     return doneCount
 
+
 # Functions that operate on on a batch - each has a row entry as input, and returns a count of entries
 # actually transacted on SparkPost.
 def noAction(r, uri, apiKey, subAccount, snooze):
     return 0
+
 
 actionVector = {
     'check': noAction,
     'update': updateSuppressionList,
     'delete': deleteSuppressionList
 }
+
 
 # Functions to perform specific tasks on entire list
 def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, subAccount, snooze, **p):
@@ -283,6 +296,7 @@ def RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, subAccount, snooze, 
             else:
                 print('Unexpected link in response: ', json.dumps(l))
                 exit(1)
+
 
 def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, descDefault, batchSize, cfgGlobalSubAccount, snooze):
     if cfgGlobalSubAccount:
@@ -400,6 +414,42 @@ def processFile(infile, actionFunction, baseUri, apiKey, typeDefault, descDefaul
             .format(goodFlags, defaultedFlags, typeDefault))
     return True
 
+
+def PurgeSuppListToFile(outfile, fList, baseUri, apiKey, subAccount, snooze, **p):
+        if 'from' in p:
+            print('Time from    :', p['from'])
+        if 'to' in p:
+            print('Time to      :', p['to'])
+        if subAccount:
+            print('Subaccount   :', subAccount)
+
+        fh = csv.DictWriter(outfile, fieldnames=fList, restval='', extrasaction='ignore')
+        fh.writeheader()
+        suppPage = 1
+        p['cursor'] = 'initial'
+        morePages = True;
+        while morePages:
+            res = getSuppressionList(baseUri, apiKey, p, subAccount, snooze)
+            if not res:  # Unexpected error - quit
+                exit(1)
+            if p['cursor'] == 'initial':
+                print('Total entries to purge: {}'.format(res['total_count']))
+            deleteSuppressionList(res['results'], baseUri, apiKey, subAccount, snooze)
+
+            # Get the links from the response.  If there is a 'next' link, we continue processing
+            morePages = False
+            for l in res['links']:
+                if l['rel'] == 'next':
+                    p['cursor'] = parse_qs(urlparse(l['href']).query)['cursor']
+                    suppPage += 1
+                    morePages = True
+                elif l['rel'] in ('last', 'first', 'previous'):
+                    pass
+                else:
+                    print('Unexpected link in response: ', json.dumps(l))
+                    exit(1)
+
+
 # Check we have a valid SparkPost API endpoint URL
 def checkValidSparkPostEndpoint(url):
     if str.startswith(url, 'https'):
@@ -423,6 +473,7 @@ def checkValidSparkPostEndpoint(url):
             exit(1)
     # Otherwise OK
     return fullurl
+
 
 # -----------------------------------------------------------------------------------------
 # Main code
@@ -492,8 +543,8 @@ if len(sys.argv) >= 3:
     elif cmd=='retrieve':
         with open(suppFname, 'w', newline='', encoding=charEncs[0]) as outfile:
             # Check for optional time-range parameters
-            fromTime = None;
-            toTime = None;
+            fromTime = None
+            toTime = None
             if len(sys.argv) >= 4:
                 fromTime = sys.argv[3]
                 if not isExpectedEventDateTimeFormat(fromTime):
@@ -512,6 +563,33 @@ if len(sys.argv) >= 3:
                 opts = {'per_page': batchSize}
             print('Retrieving SparkPost suppression-list entries to', suppFname, 'with file encoding=' + charEncs[0])
             RetrieveSuppListToFile(outfile, fList, baseUri, apiKey, cfgGlobalSubAccount, cfgSnooze, **opts)
+
+    elif cmd=='purge':
+        with open(suppFname, 'w', newline='', encoding=charEncs[0]) as outfile:
+            # keep batch sizes small for Delete, so we can see visible progress
+            batchSize = min(batchSize, 10 * Nthreads)
+            # Check for optional time-range parameters
+            fromTime = None
+            toTime = None
+            if len(sys.argv) >= 4:
+                fromTime = sys.argv[3]
+                if not isExpectedEventDateTimeFormat(fromTime):
+                    print('Error: unrecognised from_time:', fromTime)
+                    exit(1)
+                fromTime = composeEventDateTimeFormatWithTZ(fromTime, timeZone)
+
+                toTime = sys.argv[4]
+                if not isExpectedEventDateTimeFormat(toTime):
+                    print('Error: unrecognised to_time:', toTime)
+                    exit(1)
+                toTime = composeEventDateTimeFormatWithTZ(toTime, timeZone)
+
+                opts = {'from': fromTime, 'to': toTime, 'per_page': batchSize}      # Need this way, as 'from' is a Python keyword
+            else:
+                opts = {'per_page': batchSize}
+
+            print('Purging SparkPost suppression-list entries, recording to', suppFname, 'with file encoding=' + charEncs[0])
+            PurgeSuppListToFile(outfile, fList, baseUri, apiKey, cfgGlobalSubAccount, cfgSnooze, **opts)
 
     else:
         printHelp()
