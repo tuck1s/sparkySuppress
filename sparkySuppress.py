@@ -435,6 +435,8 @@ def PurgeSuppListToFile(outfile, fList, baseUri, apiKey, subAccount, snooze, **p
             if p['cursor'] == 'initial':
                 print('Total entries to purge: {}'.format(res['total_count']))
             deleteSuppressionList(res['results'], baseUri, apiKey, subAccount, snooze)
+            for i in res['results']:
+                fh.writerow(i)  # Write out results as CSV rows in the output file
 
             # Get the links from the response.  If there is a 'next' link, we continue processing
             morePages = False
