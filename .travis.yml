@@ -1,0 +1,23 @@
+language: python
+python:
+  - "3.4"
+  - "3.5"
+  - "3.6"
+  - "3.7"
+
+# command to install dependencies
+install:
+  - pip install pipenv
+  - pipenv install
+
+before_script:
+  # This puts a dummy .ini file in. The API key is not valid, but it's enough to get usage info out
+  - mv sparkpost.ini.example sparkpost.ini
+
+script:
+  # basic tests - command line tool installed and gives help/usage
+  - ./sparkySuppress.py
+
+branches:
+  only:
+    - master

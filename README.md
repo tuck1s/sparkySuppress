@@ -1,15 +1,22 @@
+<a href="https://www.sparkpost.com"><img src="https://www.sparkpost.com/sites/default/files/attachments/SparkPost_Logo_2-Color_Gray-Orange_RGB.svg" width="200px"/></a>
+
+[Sign up](https://app.sparkpost.com/join?plan=free-0817?src=Social%20Media&sfdcid=70160000000pqBb&pc=GitHubSignUp&utm_source=github&utm_medium=social-media&utm_campaign=github&utm_content=sign-up) for a SparkPost account and visit our [Developer Hub](https://developers.sparkpost.com) for even more content.
+
+[![Build Status](https://travis-ci.org/tuck1s/sparkySuppress.svg?branch=master)](https://travis-ci.org/tuck1s/sparkySuppress)
+
 # sparkySuppress
 SparkPost suppression-list management tool:
-- Check format of your files (prior to import)
-- Retrieve back from SparkPost
-- Update to SparkPost (aka create if your list is currently empty)
-- Delete from SparkPost
+- Check format of your .CSV file (prior to import)
+- Retrieve suppressions from SparkPost back to a .CSV file
+- Update SparkPost suppressions from your .CSV file (aka create if your list is currently empty)
+- Delete suppressions from SparkPost (specified in your .CSV file)
+- Purge suppressions from SparkPost (effectively a retrieve & delete)
 
 This is useful in the following scenarios:
 - Migrating from another provider towards SparkPost. 
 Always a good idea from a deliverability standpoint to bring your suppressions with you.
 - Getting suppressions back into your upstream campaign management tool.
-- Cleaning your suppression list out. Perhaps a rare requirement but it's there for you.
+- Cleaning out your suppression list. Perhaps a rare requirement but it's there for you.
 
 ## Pre-requisites
 
