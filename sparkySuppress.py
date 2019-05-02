@@ -198,9 +198,14 @@ def threadAction(recipBatch, uri, apiKey, cfgGlobalSubAccount, snooze):
     th = [None] * persist.size()                # threads are created / destroyed each call
     for i,r in enumerate(recipBatch):
         h = {
-            'Authorization': apiKey,           # build each request's header from clean start
-            'X-MSYS-SUBACCOUNT': r.get('subaccount_id', cfgGlobalSubAccount)
+            'Authorization': apiKey            # build each request's header from clean start
         }
+        if 'subaccount_id' in r:
+            h['X-MSYS-SUBACCOUNT'] = r['subaccount_id']
+        elif cfgGlobalSubAccount:
+            h['X-MSYS-SUBACCOUNT'] = str(cfgGlobalSubAccount)
+        else:
+            pass
         path = uri + '/api/v1/suppression-list/' + quote(r['recipient'], safe='@')  # ensure forwardslash gets escaped
         s = persist.id(i)
         th[i] = deleter(path, h, s, snooze)
