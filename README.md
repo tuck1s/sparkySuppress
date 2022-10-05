@@ -180,7 +180,7 @@ Full set of options are as per `sparkpost.ini.example` file included in this pro
 [SparkPost]
 Authorization = <YOUR API KEY>
 
-# Host specifier is only required for Enterprise service
+# Host specifier is only required for Enterprise service or SparkPost EU
 #Host = demo.api.e.sparkpost.com
 
 # Optional. What properties to put in files retrieved from SparkPost. Useful to keep file sizes down if you don't need all fields.
