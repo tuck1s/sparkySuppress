@@ -20,7 +20,7 @@ Authorization = <YOUR API KEY>
 # defeats the object of going faster!
 #DeleteThreads = 10
 
-# Optional. Work within a subaccount.  If omitted, defaults to the master account (=0).
+# Optional. Work within just the master account (0), or a specific subaccount.  If omitted, searches all subaccounts.
 #Subaccount = 2
 
 # Optional. File encodings used for reading your file during check/update/delete/retrieve.

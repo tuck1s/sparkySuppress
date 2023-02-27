@@ -3,3 +3,4 @@
 .idea
 *.csv
 threads.py
+.DS_Store
