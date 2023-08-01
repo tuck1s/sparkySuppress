@@ -2,7 +2,7 @@
 
 [Sign up](https://app.sparkpost.com/join?plan=free-0817?src=Social%20Media&sfdcid=70160000000pqBb&pc=GitHubSignUp&utm_source=github&utm_medium=social-media&utm_campaign=github&utm_content=sign-up) for a SparkPost account and visit our [Developer Hub](https://developers.sparkpost.com) for even more content.
 
-[![Build Status](https://travis-ci.org/tuck1s/sparkySuppress.svg?branch=master)](https://travis-ci.org/tuck1s/sparkySuppress)
+[![Python application](https://github.com/tuck1s/sparkySuppress/actions/workflows/python-app.yml/badge.svg)](https://github.com/tuck1s/sparkySuppress/actions/workflows/python-app.yml)
 
 # sparkySuppress
 SparkPost suppression-list management tool:
