@@ -30,6 +30,5 @@ jobs:
         pipenv install
     - name: Basic smoke test
       run: |
-        pipenv shell
         mv sparkpost.ini.example sparkpost.ini
         ./sparkySuppress.py
