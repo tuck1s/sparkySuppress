@@ -1,4 +1,4 @@
-<a href="https://www.sparkpost.com"><img src="https://www.sparkpost.com/sites/default/files/attachments/SparkPost_Logo_2-Color_Gray-Orange_RGB.svg" width="200px"/></a>
+<a href="https://www.sparkpost.com"><img src="https://cdn.sanity.io/images/w7rshig9/production/25bc256b66274cdbafaade72a411b17058348216-496x129.svg?dl=SparkPost_Logo_DefaultDefault.svg" width="200px"/></a>
 
 [Sign up](https://app.sparkpost.com/join?plan=free-0817?src=Social%20Media&sfdcid=70160000000pqBb&pc=GitHubSignUp&utm_source=github&utm_medium=social-media&utm_campaign=github&utm_content=sign-up) for a SparkPost account and visit our [Developer Hub](https://developers.sparkpost.com) for even more content.
 
