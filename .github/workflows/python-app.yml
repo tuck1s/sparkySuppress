@@ -31,4 +31,4 @@ jobs:
     - name: Basic smoke test
       run: |
         mv sparkpost.ini.example sparkpost.ini
-        ./sparkySuppress.py
+        pipenv run sparkySuppress.py
