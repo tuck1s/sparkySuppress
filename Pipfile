@@ -8,6 +8,7 @@ requests = "*"
 validators = "*"
 pytz = "*"
 email-validator = "*"
+urllib3 = "*"
 
 [dev-packages]
 
