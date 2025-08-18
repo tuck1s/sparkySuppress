@@ -473,10 +473,10 @@ def checkValidSparkPostEndpoint(url):
             print('NOTE: .ini file # comment character must be at beginning of line.')
         exit(1)
     else:
-        # Just ping the bare endpoint, see if we get a text reply
+        # Just ping the bare endpoint, see if we get a reply
         res = requests.get(fullurl)
-        if res.status_code != 200 or not ('sparkpost' in res.text) :
-            print('URL ',fullurl, 'not a valid SparkPost API endpoint')
+        if res.status_code != 200:
+            print('URL ',fullurl, 'not a valid API endpoint')
             exit(1)
     # Otherwise OK
     return fullurl
